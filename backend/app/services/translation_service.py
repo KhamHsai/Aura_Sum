@@ -1,0 +1,1 @@
+# Service layer for translating item descriptions (Placeholder)

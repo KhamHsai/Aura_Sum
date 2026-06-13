@@ -1,0 +1,1 @@
+# Pydantic Schemas for Receipt Uploads & Analysis (Placeholder)

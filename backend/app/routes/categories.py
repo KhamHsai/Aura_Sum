@@ -1,0 +1,1 @@
+# FastAPI Routes for Category Management (Placeholder)

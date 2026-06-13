@@ -1,0 +1,2 @@
+Placeholder for the frontend-to-backend API connection.
+Specific client classes or axios wrappers will be placed here once the frontend framework is decided.

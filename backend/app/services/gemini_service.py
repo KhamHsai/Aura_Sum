@@ -1,0 +1,1 @@
+# Service layer for Gemini API interaction (Placeholder)

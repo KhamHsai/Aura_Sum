@@ -1,0 +1,1 @@
+# Service layer for Receipt processing logic (Placeholder)

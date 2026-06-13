@@ -1,0 +1,1 @@
+# SQLAlchemy Model for Categories (Placeholder)
