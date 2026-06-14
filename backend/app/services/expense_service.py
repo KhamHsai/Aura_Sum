@@ -1,7 +1,11 @@
 """Service layer for expense management."""
 
 from datetime import datetime, timezone
+from io import BytesIO
 
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 
 from app.models.category import Category
@@ -476,6 +480,195 @@ def unlink_receipt_from_expense(
 
 
 # ── Confirm ────────────────────────────────────────────────────────────────────
+
+# ── Excel Export ───────────────────────────────────────────────────────────────
+
+def _category_name(category) -> str:
+    """Return a readable category name, falling back to 'Uncategorized'."""
+    if category is None:
+        return "Uncategorized"
+    return category.name_en or category.name_th or "Uncategorized"
+
+
+def _apply_header_style(ws) -> None:
+    """Bold the header row, freeze it, and enable auto-filter."""
+    bold = Font(bold=True)
+    for cell in ws[1]:
+        cell.font = bold
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+
+
+def _set_column_widths(ws, widths: list[int]) -> None:
+    """Set column widths by position (1-indexed list)."""
+    for i, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+
+def export_user_expenses_to_excel(db: Session, user_id: int) -> BytesIO:
+    """
+    Build an in-memory Excel workbook with two worksheets:
+      - Expenses  : one row per active expense
+      - Expense Items : one row per active item across all active expenses
+
+    Only the authenticated user's non-deleted expenses and items are included.
+    Returns a BytesIO stream ready to be sent as a file download.
+    """
+    # ── 1. Query data ──────────────────────────────────────────────────────────
+    expenses = (
+        db.query(Expense)
+        .filter(
+            Expense.user_id == user_id,
+            Expense.deleted_at.is_(None),
+        )
+        .order_by(Expense.created_at.asc(), Expense.id.asc())
+        .all()
+    )
+
+    expense_ids = [e.id for e in expenses]
+
+    items = []
+    if expense_ids:
+        items = (
+            db.query(ExpenseItem)
+            .filter(
+                ExpenseItem.expense_id.in_(expense_ids),
+                ExpenseItem.deleted_at.is_(None),
+            )
+            .order_by(ExpenseItem.expense_id.asc(), ExpenseItem.id.asc())
+            .all()
+        )
+
+    # ── 2. Build workbook ──────────────────────────────────────────────────────
+    wb = Workbook()
+
+    # Remove the default empty sheet
+    default_sheet = wb.active
+    wb.remove(default_sheet)
+
+    # ── 3. Expenses worksheet ──────────────────────────────────────────────────
+    ws_exp = wb.create_sheet("Expenses")
+
+    expense_headers = [
+        "Expense ID", "Receipt Date", "Receipt Time", "Title", "Merchant Name",
+        "Category", "Receipt Number", "Document Type", "Payment Method", "Currency",
+        "Subtotal", "Tax Amount", "Discount Amount", "Total Amount",
+        "Input Method", "Language", "Confirmed", "Notes", "Created At", "Updated At",
+    ]
+    ws_exp.append(expense_headers)
+
+    for exp in expenses:
+        ws_exp.append([
+            exp.id,
+            exp.receipt_date,            # date → formatted below
+            exp.receipt_time,            # time → formatted below
+            exp.title,
+            exp.merchant_name,
+            _category_name(exp.category),
+            exp.receipt_number,
+            exp.document_type,
+            exp.payment_method,
+            exp.currency,
+            float(exp.subtotal) if exp.subtotal is not None else None,
+            float(exp.tax_amount) if exp.tax_amount is not None else None,
+            float(exp.discount_amount) if exp.discount_amount is not None else None,
+            float(exp.total_amount) if exp.total_amount is not None else None,
+            exp.input_method,
+            exp.language_detected,
+            "Yes" if exp.is_confirmed else "No",
+            exp.notes,
+            exp.created_at,
+            exp.updated_at,
+        ])
+
+    # Apply number/date formats to money and date columns
+    MONEY_COLS_EXP = [11, 12, 13, 14]   # Subtotal … Total Amount (1-indexed)
+    DATE_COL_EXP = 2                     # Receipt Date
+    TIME_COL_EXP = 3                     # Receipt Time
+    DT_COLS_EXP = [19, 20]              # Created At, Updated At
+
+    for row in ws_exp.iter_rows(min_row=2):
+        for col_idx in MONEY_COLS_EXP:
+            cell = row[col_idx - 1]
+            if cell.value is not None:
+                cell.number_format = "0.00"
+        date_cell = row[DATE_COL_EXP - 1]
+        if date_cell.value is not None:
+            date_cell.number_format = "yyyy-mm-dd"
+        time_cell = row[TIME_COL_EXP - 1]
+        if time_cell.value is not None:
+            time_cell.number_format = "hh:mm:ss"
+        for col_idx in DT_COLS_EXP:
+            cell = row[col_idx - 1]
+            if cell.value is not None:
+                cell.number_format = "yyyy-mm-dd hh:mm:ss"
+
+    _apply_header_style(ws_exp)
+    _set_column_widths(ws_exp, [
+        10, 12, 10, 28, 22,   # ID … Merchant Name
+        16, 14, 16, 16, 8,    # Category … Currency
+        12, 12, 14, 14,       # Subtotal … Total Amount
+        14, 10, 10, 30,       # Input Method … Notes
+        18, 18,               # Created At, Updated At
+    ])
+
+    # ── 4. Expense Items worksheet ─────────────────────────────────────────────
+    ws_items = wb.create_sheet("Expense Items")
+
+    item_headers = [
+        "Expense ID", "Item ID", "Original Name", "English Name", "Thai Name",
+        "Category", "Quantity", "Unit", "Unit Price", "Discount Amount",
+        "Total Price", "Created At", "Updated At",
+    ]
+    ws_items.append(item_headers)
+
+    for item in items:
+        ws_items.append([
+            item.expense_id,
+            item.id,
+            item.original_name,
+            item.name_en,
+            item.name_th,
+            _category_name(item.category),
+            float(item.quantity) if item.quantity is not None else None,
+            item.unit,
+            float(item.unit_price) if item.unit_price is not None else None,
+            float(item.discount_amount) if item.discount_amount is not None else None,
+            float(item.total_price) if item.total_price is not None else None,
+            item.created_at,
+            item.updated_at,
+        ])
+
+    MONEY_COLS_ITEMS = [9, 10, 11]   # Unit Price … Total Price
+    QTY_COL = 7
+    DT_COLS_ITEMS = [12, 13]
+
+    for row in ws_items.iter_rows(min_row=2):
+        for col_idx in MONEY_COLS_ITEMS:
+            cell = row[col_idx - 1]
+            if cell.value is not None:
+                cell.number_format = "0.00"
+        qty_cell = row[QTY_COL - 1]
+        if qty_cell.value is not None:
+            qty_cell.number_format = "0.000"
+        for col_idx in DT_COLS_ITEMS:
+            cell = row[col_idx - 1]
+            if cell.value is not None:
+                cell.number_format = "yyyy-mm-dd hh:mm:ss"
+
+    _apply_header_style(ws_items)
+    _set_column_widths(ws_items, [
+        10, 8, 28, 22, 22,    # Expense ID … Thai Name
+        16, 10, 10, 12, 14,   # Category … Discount Amount
+        12, 18, 18,           # Total Price … Updated At
+    ])
+
+    # ── 5. Save to memory and return ───────────────────────────────────────────
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    return stream
+
 
 def confirm_user_expense(
     db: Session,

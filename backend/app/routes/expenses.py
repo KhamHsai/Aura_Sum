@@ -1,6 +1,10 @@
 """Protected routes for expense management."""
 
+from datetime import date
+from io import BytesIO
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -14,6 +18,7 @@ from app.services.expense_service import (
     create_expense,
     confirm_user_expense,
     delete_user_expense,
+    export_user_expenses_to_excel,
     get_user_expense_by_id,
     get_user_expenses,
     link_receipt_to_expense,
@@ -58,6 +63,25 @@ def list_expenses_route(
 ) -> list[ExpenseResponse]:
     """Return all non-deleted expenses belonging to the authenticated user, newest first."""
     return get_user_expenses(db, current_user.id)
+
+
+# ── Export route must be registered BEFORE /{expense_id} ──────────────────────
+@router.get(
+    "/export",
+    summary="Export Expenses to Excel",
+)
+def export_expenses_route(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Export the authenticated user's active expenses and items to an Excel file."""
+    file_stream: BytesIO = export_user_expenses_to_excel(db, current_user.id)
+    filename = f"smart_receipt_expenses_{date.today().isoformat()}.xlsx"
+    return StreamingResponse(
+        file_stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get(
