@@ -26,15 +26,29 @@
       </div>
 
       <ExpenseForm
+        ref="expenseFormRef"
         :initial-data="initialForm"
         :categories="categories"
         :loading-categories="loadingCategories"
         :is-submitting="isSubmitting"
-        :submit-label="t('update_expense')"
+        :submit-label="isConfirming ? t('confirming') : t('update_expense')"
         :backend-error="backendError"
         @submit="handleSubmit"
         @cancel="router.push({ name: 'expense-detail', params: { id: expenseId } })"
       />
+
+      <!-- Confirm Expense button — only visible for unconfirmed draft expenses -->
+      <div v-if="loadedExpense && !loadedExpense.is_confirmed" class="form-actions" style="margin-top:0;">
+        <button
+          type="button"
+          class="btn btn-confirm"
+          style="width:auto;"
+          :disabled="isSubmitting || isConfirming"
+          @click="handleConfirmClick"
+        >
+          {{ isConfirming ? t('confirming') : t('confirm_expense') }}
+        </button>
+      </div>
     </template>
   </AppLayout>
 </template>
@@ -46,8 +60,8 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '../layouts/AppLayout.vue'
 import ExpenseForm from '../components/ExpenseForm.vue'
 import { getCategories } from '../api/categoryApi'
-import { getExpenseById, updateExpense } from '../api/expenseApi'
-import { showSuccessAlert, showErrorAlert } from '../utils/alerts'
+import { getExpenseById, updateExpense, confirmExpense } from '../api/expenseApi'
+import { showSuccessAlert, showErrorAlert, showDeleteConfirmation } from '../utils/alerts'
 import type { Category } from '../types/category'
 import type {
   Expense,
@@ -64,10 +78,18 @@ const categories = ref<Category[]>([])
 const loadingCategories = ref(false)
 const isLoading = ref(false)
 const isSubmitting = ref(false)
+const isConfirming = ref(false)
+// Tracks whether the next form submit should trigger save+confirm.
+const confirmPending = ref(false)
+// Holds the loaded expense so we can check is_confirmed after load.
+const loadedExpense = ref<Expense | null>(null)
 const notFound = ref(false)
 const loadError = ref<string | null>(null)
 const backendError = ref<string | null>(null)
 let expenseId = 0
+
+// Template ref to the ExpenseForm component's root form element
+const expenseFormRef = ref<InstanceType<typeof ExpenseForm> | null>(null)
 
 // Reactive initial data for the form — starts empty, filled after load
 const initialForm = ref<ExpenseFormData>(emptyForm())
@@ -186,6 +208,7 @@ async function loadData(): Promise<void> {
     ])
     categories.value = cats
     initialForm.value = expenseToForm(expense)
+    loadedExpense.value = expense
   } catch (err: unknown) {
     const status = (err as { response?: { status?: number } })?.response?.status
     if (status === 404) {
@@ -199,24 +222,85 @@ async function loadData(): Promise<void> {
   }
 }
 
+// Called by ExpenseForm when it validates successfully and emits 'submit'.
+// When confirmPending is true, save first then confirm.
 async function handleSubmit(form: ExpenseFormData): Promise<void> {
+  const shouldConfirm = confirmPending.value
+  confirmPending.value = false
+
   isSubmitting.value = true
   backendError.value = null
+
+  if (shouldConfirm) {
+    isConfirming.value = true
+  }
 
   try {
     const request = buildRequest(form)
     await updateExpense(expenseId, request)
-    await showSuccessAlert(t('expense_updated'), t('expense_updated_message'))
-    router.push({ name: 'expense-detail', params: { id: expenseId } })
+
+    if (!shouldConfirm) {
+      // Normal save — show success and go to detail
+      await showSuccessAlert(t('expense_updated'), t('expense_updated_message'))
+      router.push({ name: 'expense-detail', params: { id: expenseId } })
+      return
+    }
+
+    // Save succeeded — now confirm
+    try {
+      await confirmExpense(expenseId)
+      await showSuccessAlert(t('expense_confirmed'), t('expense_confirmed_message'))
+      router.push({ name: 'expense-detail', params: { id: expenseId } })
+    } catch (confirmErr: unknown) {
+      // Save succeeded but confirm failed — stay on page and show error
+      const status = (confirmErr as { response?: { status?: number; data?: { detail?: string } } })?.response?.status
+      const detail = (confirmErr as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      if (status === 409) {
+        const msg = typeof detail === 'string' ? detail : t('already_confirmed')
+        await showErrorAlert(t('unable_to_confirm_expense'), msg)
+      } else if (status === 422) {
+        const msg = typeof detail === 'string' ? detail : t('incomplete_expense')
+        await showErrorAlert(t('unable_to_confirm_expense'), msg)
+      } else {
+        await showErrorAlert(t('unable_to_confirm_expense'), t('please_review_and_try_again'))
+      }
+    }
   } catch (err: unknown) {
     const response = (err as { response?: { status?: number } })?.response
     backendError.value = parseBackendError(err)
-    // Show a popup for network/server failures (not for frontend or 422 validation errors)
     if (!response || (response.status !== 422 && response.status !== 400)) {
       await showErrorAlert(t('unable_to_save_expense'), t('something_went_wrong'))
     }
   } finally {
     isSubmitting.value = false
+    isConfirming.value = false
+  }
+}
+
+// Called by the "Confirm Expense" button below the form.
+// Shows SweetAlert2 dialog first, then sets confirmPending and programmatically
+// submits the form to trigger its own validation before saving+confirming.
+async function handleConfirmClick(): Promise<void> {
+  if (isSubmitting.value || isConfirming.value) return
+
+  const result = await showDeleteConfirmation({
+    title: t('confirm_expense_title'),
+    text: t('confirm_expense_message'),
+    confirmButtonText: t('confirm_expense'),
+    cancelButtonText: t('cancel'),
+  })
+
+  if (!result.isConfirmed) return
+
+  // Flag the next handleSubmit call to also confirm after saving
+  confirmPending.value = true
+
+  // Trigger the form's own validation + submit via its exposed submitForm method
+  if (expenseFormRef.value) {
+    expenseFormRef.value.submitForm()
+  } else {
+    // Fallback — should not happen in normal usage
+    confirmPending.value = false
   }
 }
 

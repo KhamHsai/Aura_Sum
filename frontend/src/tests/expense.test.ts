@@ -24,6 +24,7 @@ vi.mock('../api/authApi', () => ({
 vi.mock('../api/expenseApi', () => ({
   getExpenses: vi.fn(),
   getExpenseById: vi.fn(),
+  exportExpenses: vi.fn(),
 }))
 
 vi.mock('../utils/alerts', () => ({
@@ -31,6 +32,11 @@ vi.mock('../utils/alerts', () => ({
   showErrorAlert: vi.fn().mockResolvedValue(undefined),
   showDeleteConfirmation: vi.fn().mockResolvedValue({ isConfirmed: false }),
 }))
+
+vi.mock('../utils/download', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/download')>()
+  return { ...actual, downloadBlob: vi.fn() }
+})
 
 vi.mock('vue-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-router')>()

@@ -2,9 +2,19 @@
   <AppLayout>
     <div class="page-header">
       <h1>{{ t('expenses') }}</h1>
-      <RouterLink :to="{ name: 'expense-create' }" class="btn btn-primary" style="width:auto; text-decoration:none;">
-        {{ t('add_expense') }}
-      </RouterLink>
+      <div class="page-header-actions">
+        <RouterLink :to="{ name: 'expense-create' }" class="btn btn-primary" style="width:auto; text-decoration:none;">
+          {{ t('add_expense') }}
+        </RouterLink>
+        <button
+          class="btn btn-secondary"
+          :disabled="isExporting"
+          style="width:auto;"
+          @click="handleExport"
+        >
+          {{ isExporting ? t('exporting') : t('export_excel') }}
+        </button>
+      </div>
     </div>
 
     <!-- Loading -->
@@ -80,8 +90,16 @@ import { ref, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '../layouts/AppLayout.vue'
-import { getExpenses } from '../api/expenseApi'
+import { getExpenses, exportExpenses } from '../api/expenseApi'
 import { formatMoney, formatDate } from '../utils/formatters'
+import {
+  getFilenameFromContentDisposition,
+  downloadBlob,
+  isValidExcelBlob,
+  parseBlobErrorMessage,
+  FALLBACK_FILENAME,
+} from '../utils/download'
+import { showSuccessAlert, showErrorAlert } from '../utils/alerts'
 import type { Expense } from '../types/expense'
 
 const { t } = useI18n()
@@ -89,6 +107,7 @@ const { t } = useI18n()
 const expenses = ref<Expense[]>([])
 const isLoading = ref(false)
 const error = ref<string | null>(null)
+const isExporting = ref(false)
 
 async function loadExpenses(): Promise<void> {
   isLoading.value = true
@@ -99,6 +118,44 @@ async function loadExpenses(): Promise<void> {
     error.value = t('unable_to_load_expenses')
   } finally {
     isLoading.value = false
+  }
+}
+
+async function handleExport(): Promise<void> {
+  // Prevent duplicate clicks while a download is in progress
+  if (isExporting.value) return
+
+  isExporting.value = true
+  try {
+    const result = await exportExpenses()
+
+    // Validate the blob before triggering a download
+    if (!isValidExcelBlob(result.blob, result.contentType)) {
+      await showErrorAlert(t('unable_to_export_expenses'), t('invalid_export_file'))
+      return
+    }
+
+    // Resolve filename from Content-Disposition header, fall back to a safe default
+    const filename =
+      getFilenameFromContentDisposition(result.contentDisposition) ?? FALLBACK_FILENAME
+
+    downloadBlob(result.blob, filename)
+    await showSuccessAlert(t('export_completed'), t('export_completed_message'))
+  } catch (err: unknown) {
+    // Backend JSON errors arrive as a Blob when responseType is 'blob'
+    let userMessage = t('export_failed_message')
+
+    const axiosError = err as { response?: { data?: unknown } }
+    if (axiosError?.response?.data instanceof Blob) {
+      const parsed = await parseBlobErrorMessage(axiosError.response.data)
+      if (parsed) {
+        userMessage = parsed
+      }
+    }
+
+    await showErrorAlert(t('unable_to_export_expenses'), userMessage)
+  } finally {
+    isExporting.value = false
   }
 }
 
