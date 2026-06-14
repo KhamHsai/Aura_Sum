@@ -44,7 +44,7 @@ export default defineConfig({
 
   // Screenshot on failure, trace on first retry
   use: {
-    baseURL: 'http://127.0.0.1:5173',
+    baseURL: 'http://localhost:5173',
     screenshot: 'only-on-failure',
     trace: 'on-first-retry',
     // Accept the SweetAlert2 dialogs through the DOM rather than native browser dialogs

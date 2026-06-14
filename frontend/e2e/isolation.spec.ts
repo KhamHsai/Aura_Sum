@@ -15,10 +15,10 @@ import {
   testEmail,
   testUsername,
   getFirstCategoryId,
-  loginApi,
   createExpenseApi,
   uploadReceiptApi,
 } from './helpers/testData'
+import { loginApi } from './helpers/auth'
 import { readFileSync } from 'fs'
 import path from 'path'
 
