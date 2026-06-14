@@ -542,4 +542,7 @@ function handleSubmit(): void {
   // Emit a plain copy — the parent builds the actual API request
   emit('submit', deepCopy(form))
 }
+
+// Expose submitForm so parent views can programmatically trigger validation + submit.
+defineExpose({ submitForm: handleSubmit })
 </script>
