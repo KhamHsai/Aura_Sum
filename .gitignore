@@ -1,12 +1,36 @@
+# ── Environment files (contain secrets — never commit) ────────────────────────
 .env
+# .env.example is intentionally NOT ignored — it is safe to commit
+
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
-.venv/
+*.py[cod]
+*.pyo
+
+# ── Virtual environments ───────────────────────────────────────────────────────
 venv/
-node_modules/
-dist/
+.venv/
+env/
+
+# ── Test and coverage artifacts ───────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# ── Uploaded receipt files ────────────────────────────────────────────────────
+# Keep the directory but ignore actual uploaded files
+backend/uploads/receipts/*
+!backend/uploads/receipts/.gitkeep
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+
+# ── OS / IDE files ────────────────────────────────────────────────────────────
 .DS_Store
 .vscode/
 .idea/
-backend/uploads/receipts/*
-!backend/uploads/receipts/.gitkeep
+
+# ── Node (frontend, if added later) ───────────────────────────────────────────
+node_modules/
+dist/
