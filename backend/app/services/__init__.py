@@ -17,6 +17,14 @@ from app.services.receipt_service import (
     delete_user_receipt,
     ReceiptServiceError,
 )
+from app.services.expense_service import (
+    create_expense,
+    get_user_expenses,
+    get_user_expense_by_id,
+    update_user_expense,
+    delete_user_expense,
+    ExpenseServiceError,
+)
 
 __all__ = [
     "register_user",
@@ -32,5 +40,11 @@ __all__ = [
     "get_user_receipt_by_id",
     "delete_user_receipt",
     "ReceiptServiceError",
+    "create_expense",
+    "get_user_expenses",
+    "get_user_expense_by_id",
+    "update_user_expense",
+    "delete_user_expense",
+    "ExpenseServiceError",
 ]
 
