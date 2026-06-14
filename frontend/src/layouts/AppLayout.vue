@@ -16,7 +16,7 @@
       </div>
 
       <div class="navbar-right">
-        <!-- Current user email -->
+        <!-- Current user email — hidden on very small screens -->
         <span v-if="auth.user" class="navbar-user">{{ auth.user.email }}</span>
 
         <!-- Language switcher -->
@@ -26,7 +26,7 @@
         </select>
 
         <!-- Logout button -->
-        <button class="btn btn-secondary" @click="auth.logout()">
+        <button class="btn btn-secondary" style="width:auto;" @click="auth.logout()">
           {{ t('logout') }}
         </button>
       </div>

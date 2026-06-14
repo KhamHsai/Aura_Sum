@@ -34,3 +34,12 @@ backend/uploads/receipts/*
 # ── Node (frontend, if added later) ───────────────────────────────────────────
 node_modules/
 dist/
+
+# ── Playwright E2E artifacts (generated — do not commit) ──────────────────────
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/.playwright/
+
+# ── E2E environment file (contains real credentials) ─────────────────────────
+frontend/.env.e2e

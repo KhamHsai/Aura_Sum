@@ -54,6 +54,14 @@
                 {{ t('edit_expense') }}
               </RouterLink>
               <button
+                v-if="!expense.is_confirmed"
+                class="btn btn-confirm"
+                :disabled="isConfirming"
+                @click="handleConfirm"
+              >
+                {{ isConfirming ? t('confirming') : t('confirm_expense') }}
+              </button>
+              <button
                 class="btn btn-danger"
                 :disabled="isDeleting"
                 @click="handleDelete"
@@ -163,6 +171,104 @@
           </table>
         </div>
       </div>
+
+      <!-- Translation card -->
+      <div class="detail-card translation-section">
+        <h2>{{ t('translate_expense') }}</h2>
+
+        <p class="translation-quota-notice">{{ t('ai_translation_quota_notice') }}</p>
+
+        <!-- Language selector and translate button -->
+        <div class="translation-controls">
+          <label for="target-language-select" class="translation-label">
+            {{ t('target_language') }}
+          </label>
+          <select
+            id="target-language-select"
+            v-model="targetLanguage"
+            class="translation-select"
+            :disabled="isTranslating"
+            aria-label="target language"
+          >
+            <option value="en">{{ t('lang_en') }}</option>
+            <option value="th">{{ t('lang_th') }}</option>
+          </select>
+
+          <button
+            class="btn btn-primary"
+            :disabled="isTranslating"
+            @click="handleTranslate"
+          >
+            {{ isTranslating ? t('translating') : t('translate') }}
+          </button>
+        </div>
+
+        <!-- Loading state -->
+        <div v-if="isTranslating" class="translation-loading" aria-live="polite">
+          <span class="translation-spinner" aria-hidden="true">⏳</span>
+          {{ t('translating') }} {{ t('translation_may_take_a_moment') }}
+        </div>
+
+        <!-- Translation error -->
+        <div v-if="translationError && !isTranslating" class="alert alert-error translation-error">
+          {{ translationError }}
+        </div>
+
+        <!-- Translation result -->
+        <div v-if="translationResult && !isTranslating" class="translation-result">
+
+          <!-- Title comparison -->
+          <div class="translation-comparison">
+            <div class="translation-original">
+              <label>{{ t('original_title') }}</label>
+              <span>{{ expense.title }}</span>
+            </div>
+            <div class="translation-translated">
+              <label>{{ t('translated_title') }}</label>
+              <span>{{ translationResult.translated_title ?? t('no_translation_available') }}</span>
+            </div>
+          </div>
+
+          <!-- Notes comparison (only if expense has notes) -->
+          <div v-if="expense.notes" class="translation-comparison">
+            <div class="translation-original">
+              <label>{{ t('original_notes') }}</label>
+              <span>{{ expense.notes }}</span>
+            </div>
+            <div class="translation-translated">
+              <label>{{ t('translated_notes') }}</label>
+              <span>{{ translationResult.translated_notes ?? t('no_translation_available') }}</span>
+            </div>
+          </div>
+
+          <!-- Translated items (only if there are items with translations) -->
+          <div v-if="translationResult.items.length > 0" class="translation-items">
+            <h3 style="font-size:1rem; color:#1a1a2e; margin-bottom:0.75rem;">
+              {{ t('expense_items') }}
+            </h3>
+            <div
+              v-for="tItem in translationResult.items"
+              :key="tItem.item_id"
+              class="translation-item-row"
+            >
+              <div class="translation-original">
+                <label>{{ t('original_name') }}</label>
+                <span>{{ tItem.original_name ?? t('no_translation_available') }}</span>
+              </div>
+              <div class="translation-translated">
+                <label>{{ t('translated_name') }}</label>
+                <span>{{ tItem.translated_name ?? t('no_translation_available') }}</span>
+              </div>
+              <div class="translation-name-pair">
+                <span class="translation-name-tag">EN</span>
+                <span>{{ tItem.name_en ?? t('no_translation_available') }}</span>
+                <span class="translation-name-tag">TH</span>
+                <span>{{ tItem.name_th ?? t('no_translation_available') }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </template>
   </AppLayout>
 </template>
@@ -172,20 +278,28 @@ import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '../layouts/AppLayout.vue'
-import { getExpenseById, deleteExpense } from '../api/expenseApi'
+import { getExpenseById, deleteExpense, confirmExpense, translateExpense } from '../api/expenseApi'
 import { showDeleteConfirmation, showSuccessAlert, showErrorAlert } from '../utils/alerts'
 import { formatMoney, formatDate, formatDateTime } from '../utils/formatters'
 import type { Expense, ExpenseItem } from '../types/expense'
+import type { TranslationLanguage, ExpenseTranslationResponse } from '../types/translation'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 
 const expense = ref<Expense | null>(null)
 const isLoading = ref(false)
 const isDeleting = ref(false)
+const isConfirming = ref(false)
 const error = ref<string | null>(null)
 const notFound = ref(false)
+
+// Translation state — kept local to this view
+const targetLanguage = ref<TranslationLanguage>(locale.value === 'th' ? 'th' : 'en')
+const isTranslating = ref(false)
+const translationResult = ref<ExpenseTranslationResponse | null>(null)
+const translationError = ref<string | null>(null)
 
 const activeItems = computed<ExpenseItem[]>(() => expense.value?.items ?? [])
 
@@ -216,6 +330,71 @@ async function loadExpense(): Promise<void> {
     }
   } finally {
     isLoading.value = false
+  }
+}
+
+/** Map backend error status codes to safe user-facing messages. */
+function getTranslationErrorMessage(err: unknown): string {
+  const status = (err as { response?: { status?: number } })?.response?.status
+  if (status === 503) return t('gemini_not_configured_translation')
+  if (status === 429) return t('gemini_quota_exceeded_translation')
+  if (status === 422) return t('unsupported_language')
+  if (status === 404) return t('expense_not_found')
+  return t('translation_service_unavailable')
+}
+
+async function handleTranslate(): Promise<void> {
+  if (!expense.value || isTranslating.value) return
+
+  isTranslating.value = true
+  translationError.value = null
+
+  try {
+    const result = await translateExpense(expense.value.id, targetLanguage.value)
+    translationResult.value = result
+    await showSuccessAlert(t('translation_completed'), t('translation_completed_message'))
+  } catch (err: unknown) {
+    translationError.value = getTranslationErrorMessage(err)
+    await showErrorAlert(t('unable_to_translate_expense'), translationError.value)
+  } finally {
+    isTranslating.value = false
+  }
+}
+
+async function handleConfirm(): Promise<void> {
+  if (!expense.value || isConfirming.value) return
+
+  const result = await showDeleteConfirmation({
+    title: t('confirm_expense_title'),
+    text: t('confirm_expense_message'),
+    confirmButtonText: t('confirm_expense'),
+    cancelButtonText: t('cancel'),
+  })
+
+  if (!result.isConfirmed) return
+
+  isConfirming.value = true
+
+  try {
+    const updated = await confirmExpense(expense.value.id)
+    expense.value = updated
+    await showSuccessAlert(t('expense_confirmed'), t('expense_confirmed_message'))
+  } catch (err: unknown) {
+    const status = (err as { response?: { status?: number; data?: { detail?: string } } })?.response?.status
+    const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+    if (status === 409) {
+      const msg = typeof detail === 'string' ? detail : t('already_confirmed')
+      await showErrorAlert(t('unable_to_confirm_expense'), msg)
+    } else if (status === 422) {
+      const msg = typeof detail === 'string' ? detail : t('incomplete_expense')
+      await showErrorAlert(t('unable_to_confirm_expense'), msg)
+    } else if (status === 404) {
+      await showErrorAlert(t('expense_not_found'))
+    } else {
+      await showErrorAlert(t('unable_to_confirm_expense'), t('please_review_and_try_again'))
+    }
+  } finally {
+    isConfirming.value = false
   }
 }
 
@@ -251,3 +430,144 @@ async function handleDelete(): Promise<void> {
 
 onMounted(loadExpense)
 </script>
+
+<style scoped>
+/* Translation section */
+.translation-section {
+  margin-top: 1.5rem;
+}
+
+.translation-quota-notice {
+  font-size: 0.85rem;
+  color: #888;
+  margin-bottom: 1rem;
+}
+
+.translation-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.translation-label {
+  font-weight: 500;
+  color: #333;
+  white-space: nowrap;
+}
+
+.translation-select {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  background: #fff;
+  cursor: pointer;
+}
+
+.translation-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.translation-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #555;
+  font-size: 0.95rem;
+  padding: 0.75rem 0;
+}
+
+.translation-spinner {
+  font-size: 1.1rem;
+}
+
+.translation-error {
+  margin-top: 0.5rem;
+}
+
+.translation-result {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Original / translated comparison grid */
+.translation-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  padding: 0.75rem;
+  background: #f8f9ff;
+  border-radius: 8px;
+  border: 1px solid #e0e4f8;
+}
+
+.translation-original label,
+.translation-translated label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #777;
+  margin-bottom: 0.25rem;
+}
+
+.translation-original span {
+  color: #1a1a2e;
+  font-size: 0.95rem;
+}
+
+.translation-translated span {
+  color: #4a6cf7;
+  font-size: 0.95rem;
+}
+
+/* Item translation rows */
+.translation-items {
+  border-top: 1px solid #e0e4f8;
+  padding-top: 0.75rem;
+}
+
+.translation-item-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background: #f8f9ff;
+  border-radius: 8px;
+  border: 1px solid #e0e4f8;
+  margin-bottom: 0.5rem;
+}
+
+.translation-name-pair {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.translation-name-tag {
+  background: #e0e4f8;
+  color: #4a6cf7;
+  font-weight: 700;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .translation-comparison,
+  .translation-item-row {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
