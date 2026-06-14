@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.category import Category
 from app.models.expense import Expense
 from app.models.expense_item import ExpenseItem
+from app.models.receipt_file import ReceiptFile
 from app.schemas.expense import ExpenseCreate, ExpenseResponse, ExpenseUpdate
 from app.schemas.expense_item import ExpenseItemResponse
 
@@ -368,6 +369,201 @@ def delete_user_expense(
         db.commit()
         return True
 
+    except Exception:
+        db.rollback()
+        raise
+
+
+# ── Receipt linking ────────────────────────────────────────────────────────────
+
+def _get_owned_expense(db: Session, user_id: int, expense_id: int) -> Expense:
+    """Return the owned, non-deleted expense or raise 404 ExpenseServiceError."""
+    expense = (
+        db.query(Expense)
+        .filter(
+            Expense.id == expense_id,
+            Expense.user_id == user_id,
+            Expense.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if expense is None:
+        raise ExpenseServiceError("Expense or receipt not found", status_code=404)
+    return expense
+
+
+def _get_owned_receipt(db: Session, user_id: int, receipt_id: int) -> ReceiptFile:
+    """Return the owned, non-deleted receipt or raise 404 ExpenseServiceError."""
+    receipt = (
+        db.query(ReceiptFile)
+        .filter(
+            ReceiptFile.id == receipt_id,
+            ReceiptFile.user_id == user_id,
+            ReceiptFile.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if receipt is None:
+        raise ExpenseServiceError("Expense or receipt not found", status_code=404)
+    return receipt
+
+
+def link_receipt_to_expense(
+    db: Session,
+    user_id: int,
+    expense_id: int,
+    receipt_id: int,
+) -> ReceiptFile:
+    """
+    Link an owned receipt to an owned expense.
+
+    - If already linked to the same expense, returns success (idempotent).
+    - If linked to a different expense, raises 409.
+    - Otherwise sets receipt.expense_id and commits once.
+    """
+    expense = _get_owned_expense(db, user_id, expense_id)
+    receipt = _get_owned_receipt(db, user_id, receipt_id)
+
+    # Already linked to the same expense — nothing to do
+    if receipt.expense_id == expense.id:
+        return receipt
+
+    # Linked to a different expense — require explicit unlink first
+    if receipt.expense_id is not None:
+        raise ExpenseServiceError(
+            "Receipt is already linked to another expense", status_code=409
+        )
+
+    try:
+        receipt.expense_id = expense.id
+        db.commit()
+        db.refresh(receipt)
+        return receipt
+    except Exception:
+        db.rollback()
+        raise
+
+
+def unlink_receipt_from_expense(
+    db: Session,
+    user_id: int,
+    expense_id: int,
+    receipt_id: int,
+) -> ReceiptFile:
+    """
+    Remove the link between an owned receipt and an owned expense.
+
+    - If the receipt is not linked to this expense, raises 409.
+    - Otherwise sets receipt.expense_id to None and commits once.
+    """
+    expense = _get_owned_expense(db, user_id, expense_id)
+    receipt = _get_owned_receipt(db, user_id, receipt_id)
+
+    # Receipt must be linked to this specific expense
+    if receipt.expense_id != expense.id:
+        raise ExpenseServiceError(
+            "Receipt is not linked to this expense", status_code=409
+        )
+
+    try:
+        receipt.expense_id = None
+        db.commit()
+        db.refresh(receipt)
+        return receipt
+    except Exception:
+        db.rollback()
+        raise
+
+
+# ── Confirm ────────────────────────────────────────────────────────────────────
+
+def confirm_user_expense(
+    db: Session,
+    user_id: int,
+    expense_id: int,
+) -> ExpenseResponse:
+    """
+    Confirm an AI-extracted draft expense after the user has reviewed it.
+
+    Checks (in order):
+    1. Expense exists, belongs to user, and is not soft-deleted (404).
+    2. Expense was created by AI extraction (409).
+    3. Expense is not already confirmed (409).
+    4. category_id is set (422).
+    5. category exists, is active, and is not soft-deleted (422).
+    6. title is present and not blank (422).
+    7. total_amount is present and zero or greater (422).
+
+    On success, sets is_confirmed = True and commits once.
+    Rolls back if the commit fails.
+    """
+    # 1. Ownership check
+    expense = (
+        db.query(Expense)
+        .filter(
+            Expense.id == expense_id,
+            Expense.user_id == user_id,
+            Expense.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if expense is None:
+        raise ExpenseServiceError("Expense not found", status_code=404)
+
+    # 2. Must be an AI-extracted expense
+    if expense.input_method != "ai":
+        raise ExpenseServiceError(
+            "Only AI-extracted expenses can be confirmed", status_code=409
+        )
+
+    # 3. Already confirmed
+    if expense.is_confirmed:
+        raise ExpenseServiceError("Expense is already confirmed", status_code=409)
+
+    # 4. category_id must be set
+    if expense.category_id is None:
+        raise ExpenseServiceError(
+            "Expense category is required before confirmation", status_code=422
+        )
+
+    # 5. Category must exist, be active, and not be soft-deleted
+    category = (
+        db.query(Category)
+        .filter(
+            Category.id == expense.category_id,
+            Category.is_active == True,
+            Category.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if category is None:
+        raise ExpenseServiceError(
+            "A valid expense category is required before confirmation", status_code=422
+        )
+
+    # 6. Title must be present and not blank
+    if not expense.title or not expense.title.strip():
+        raise ExpenseServiceError(
+            "Expense title is required before confirmation", status_code=422
+        )
+
+    # 7. total_amount must be set and zero or greater
+    if expense.total_amount is None:
+        raise ExpenseServiceError(
+            "Expense total amount is required before confirmation", status_code=422
+        )
+    if expense.total_amount < 0:
+        raise ExpenseServiceError(
+            "Expense total amount must be zero or greater", status_code=422
+        )
+
+    # All checks passed — confirm in one transaction
+    try:
+        expense.is_confirmed = True
+        db.commit()
+        db.refresh(expense)
+        items = _get_non_deleted_items(db, expense.id)
+        return _build_expense_response(expense, items)
     except Exception:
         db.rollback()
         raise

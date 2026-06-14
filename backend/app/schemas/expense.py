@@ -105,7 +105,7 @@ class ExpenseResponse(BaseModel):
 
     id: int
     user_id: int
-    category_id: int
+    category_id: int | None
     title: str
     merchant_name: str | None
     receipt_number: str | None

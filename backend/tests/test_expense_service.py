@@ -771,3 +771,511 @@ def test_delete_response_does_not_expose_internal_fields(db, user, category):
     expense = make_expense(db, user.id, category.id)
     result = delete_user_expense(db, user.id, expense.id)
     assert isinstance(result, bool)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Receipt-link service tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import tempfile
+import os
+from app.models.receipt_file import ReceiptFile
+from app.services.expense_service import link_receipt_to_expense, unlink_receipt_from_expense
+
+
+def make_receipt(db, user_id: int, *, expense_id=None, deleted_at=None,
+                 stored_filename=None) -> ReceiptFile:
+    """Insert a ReceiptFile row directly for test setup."""
+    if stored_filename is None:
+        import uuid
+        stored_filename = f"{uuid.uuid4().hex}.jpg"
+    receipt = ReceiptFile(
+        user_id=user_id,
+        expense_id=expense_id,
+        original_filename="receipt.jpg",
+        stored_filename=stored_filename,
+        file_path=f"/uploads/{stored_filename}",
+        mime_type="image/jpeg",
+        file_size=1000,
+        upload_status="uploaded",
+        deleted_at=deleted_at,
+    )
+    db.add(receipt)
+    db.commit()
+    db.refresh(receipt)
+    return receipt
+
+
+# ── link_receipt_to_expense ───────────────────────────────────────────────────
+
+def test_link_receipt_succeeds(db, user, category):
+    expense = make_expense(db, user.id, category.id)
+    receipt = make_receipt(db, user.id)
+    result = link_receipt_to_expense(db, user.id, expense.id, receipt.id)
+    assert result is not None
+
+
+def test_link_stores_correct_expense_id(db, user, category):
+    expense = make_expense(db, user.id, category.id)
+    receipt = make_receipt(db, user.id)
+    result = link_receipt_to_expense(db, user.id, expense.id, receipt.id)
+    assert result.expense_id == expense.id
+
+
+def test_link_same_expense_is_idempotent(db, user, category):
+    expense = make_expense(db, user.id, category.id)
+    receipt = make_receipt(db, user.id, expense_id=expense.id)
+    # Already linked — should succeed without error
+    result = link_receipt_to_expense(db, user.id, expense.id, receipt.id)
+    assert result.expense_id == expense.id
+
+
+def test_link_receipt_already_linked_elsewhere_raises_409(db, user, category):
+    expense_a = make_expense(db, user.id, category.id, title="A")
+    expense_b = make_expense(db, user.id, category.id, title="B")
+    receipt = make_receipt(db, user.id, expense_id=expense_a.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        link_receipt_to_expense(db, user.id, expense_b.id, receipt.id)
+    assert exc_info.value.status_code == 409
+
+
+def test_link_unknown_expense_raises_404(db, user, category):
+    receipt = make_receipt(db, user.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        link_receipt_to_expense(db, user.id, 999999, receipt.id)
+    assert exc_info.value.status_code == 404
+
+
+def test_link_unknown_receipt_raises_404(db, user, category):
+    expense = make_expense(db, user.id, category.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        link_receipt_to_expense(db, user.id, expense.id, 999999)
+    assert exc_info.value.status_code == 404
+
+
+def test_link_another_users_expense_raises_404(db, category):
+    user_a = make_user(db, username="lnk_a", email="lnk_a@example.com")
+    user_b = make_user(db, username="lnk_b", email="lnk_b@example.com")
+    expense = make_expense(db, user_a.id, category.id)
+    receipt = make_receipt(db, user_b.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        link_receipt_to_expense(db, user_b.id, expense.id, receipt.id)
+    assert exc_info.value.status_code == 404
+
+
+def test_link_another_users_receipt_raises_404(db, category):
+    user_a = make_user(db, username="lnk_c", email="lnk_c@example.com")
+    user_b = make_user(db, username="lnk_d", email="lnk_d@example.com")
+    expense = make_expense(db, user_a.id, category.id)
+    receipt = make_receipt(db, user_b.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        link_receipt_to_expense(db, user_a.id, expense.id, receipt.id)
+    assert exc_info.value.status_code == 404
+
+
+def test_link_soft_deleted_expense_raises_404(db, user, category):
+    expense = make_expense(db, user.id, category.id, deleted_at=dt(2024, 1, 1))
+    receipt = make_receipt(db, user.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        link_receipt_to_expense(db, user.id, expense.id, receipt.id)
+    assert exc_info.value.status_code == 404
+
+
+def test_link_soft_deleted_receipt_raises_404(db, user, category):
+    expense = make_expense(db, user.id, category.id)
+    receipt = make_receipt(db, user.id, deleted_at=dt(2024, 1, 1))
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        link_receipt_to_expense(db, user.id, expense.id, receipt.id)
+    assert exc_info.value.status_code == 404
+
+
+# ── unlink_receipt_from_expense ───────────────────────────────────────────────
+
+def test_unlink_receipt_succeeds(db, user, category):
+    expense = make_expense(db, user.id, category.id)
+    receipt = make_receipt(db, user.id, expense_id=expense.id)
+    result = unlink_receipt_from_expense(db, user.id, expense.id, receipt.id)
+    assert result.expense_id is None
+
+
+def test_unlink_preserves_receipt_row(db, user, category):
+    expense = make_expense(db, user.id, category.id)
+    receipt = make_receipt(db, user.id, expense_id=expense.id)
+    receipt_id = receipt.id
+    unlink_receipt_from_expense(db, user.id, expense.id, receipt.id)
+    row = db.query(ReceiptFile).filter(ReceiptFile.id == receipt_id).first()
+    assert row is not None
+    assert row.deleted_at is None
+
+
+def test_unlink_preserves_physical_file(db, user, category):
+    """Unlink must not delete the physical file — only the DB reference changes."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        fake_path = os.path.join(tmpdir, "receipt.jpg")
+        with open(fake_path, "wb") as f:
+            f.write(b"fake image data")
+
+        expense = make_expense(db, user.id, category.id)
+        receipt = make_receipt(db, user.id, expense_id=expense.id)
+        # Override file_path to the temp file so we can check it afterward
+        receipt.file_path = fake_path
+        db.commit()
+
+        unlink_receipt_from_expense(db, user.id, expense.id, receipt.id)
+
+        assert os.path.exists(fake_path), "Physical file must not be deleted on unlink"
+
+
+def test_unlink_wrong_expense_raises_409(db, user, category):
+    expense_a = make_expense(db, user.id, category.id, title="A")
+    expense_b = make_expense(db, user.id, category.id, title="B")
+    receipt = make_receipt(db, user.id, expense_id=expense_a.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        unlink_receipt_from_expense(db, user.id, expense_b.id, receipt.id)
+    assert exc_info.value.status_code == 409
+
+
+def test_unlink_unlinked_receipt_raises_409(db, user, category):
+    expense = make_expense(db, user.id, category.id)
+    receipt = make_receipt(db, user.id)  # expense_id is None
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        unlink_receipt_from_expense(db, user.id, expense.id, receipt.id)
+    assert exc_info.value.status_code == 409
+
+
+def test_unlink_unknown_expense_raises_404(db, user, category):
+    receipt = make_receipt(db, user.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        unlink_receipt_from_expense(db, user.id, 999999, receipt.id)
+    assert exc_info.value.status_code == 404
+
+
+def test_unlink_unknown_receipt_raises_404(db, user, category):
+    expense = make_expense(db, user.id, category.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        unlink_receipt_from_expense(db, user.id, expense.id, 999999)
+    assert exc_info.value.status_code == 404
+
+
+def test_unlink_another_users_records_raises_404(db, category):
+    user_a = make_user(db, username="ulnk_a", email="ulnk_a@example.com")
+    user_b = make_user(db, username="ulnk_b", email="ulnk_b@example.com")
+    expense = make_expense(db, user_a.id, category.id)
+    receipt = make_receipt(db, user_a.id, expense_id=expense.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        unlink_receipt_from_expense(db, user_b.id, expense.id, receipt.id)
+    assert exc_info.value.status_code == 404
+
+
+def test_link_db_failure_rolls_back(db, user, category):
+    """Simulate a DB failure: receipt.expense_id must stay None after rollback."""
+    from unittest.mock import patch
+    expense = make_expense(db, user.id, category.id)
+    receipt = make_receipt(db, user.id)
+
+    original_commit = db.commit
+
+    def fail_once():
+        db.commit = original_commit  # restore before raising
+        raise RuntimeError("Simulated DB failure")
+
+    db.commit = fail_once
+
+    with pytest.raises(RuntimeError):
+        link_receipt_to_expense(db, user.id, expense.id, receipt.id)
+
+    db.expire(receipt)
+    db.refresh(receipt)
+    assert receipt.expense_id is None
+
+
+def test_unlink_db_failure_rolls_back(db, user, category):
+    """Simulate a DB failure: receipt.expense_id must stay set after rollback."""
+    from unittest.mock import patch
+    expense = make_expense(db, user.id, category.id)
+    receipt = make_receipt(db, user.id, expense_id=expense.id)
+
+    original_commit = db.commit
+
+    def fail_once():
+        db.commit = original_commit
+        raise RuntimeError("Simulated DB failure")
+
+    db.commit = fail_once
+
+    with pytest.raises(RuntimeError):
+        unlink_receipt_from_expense(db, user.id, expense.id, receipt.id)
+
+    db.expire(receipt)
+    db.refresh(receipt)
+    assert receipt.expense_id == expense.id
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# confirm_user_expense tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from app.services.expense_service import confirm_user_expense
+from app.models.receipt_file import ReceiptFile as ReceiptFileModel
+
+
+def make_ai_expense(
+    db,
+    user_id: int,
+    category_id: int | None,
+    *,
+    title: str = "Lunch at Cafe",
+    total_amount: Decimal = Decimal("99.00"),
+    is_confirmed: bool = False,
+    deleted_at=None,
+) -> Expense:
+    """Insert a minimal AI-extracted draft expense for confirm tests."""
+    expense = Expense(
+        user_id=user_id,
+        category_id=category_id,
+        title=title,
+        receipt_date=date(2025, 6, 1),
+        total_amount=total_amount,
+        currency="THB",
+        input_method="ai",
+        ai_status="completed",
+        is_confirmed=is_confirmed,
+        deleted_at=deleted_at,
+    )
+    db.add(expense)
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+# ── 1. Successful confirmation ────────────────────────────────────────────────
+
+def test_confirm_returns_expense_response(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id)
+    result = confirm_user_expense(db, user.id, expense.id)
+    assert isinstance(result, ExpenseResponseSchema)
+
+
+def test_confirm_is_confirmed_becomes_true(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id)
+    result = confirm_user_expense(db, user.id, expense.id)
+    assert result.is_confirmed is True
+
+
+def test_confirm_is_confirmed_persisted_in_db(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id)
+    confirm_user_expense(db, user.id, expense.id)
+    db.expire(expense)
+    db.refresh(expense)
+    assert expense.is_confirmed is True
+
+
+def test_confirm_ai_status_remains_completed(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id)
+    confirm_user_expense(db, user.id, expense.id)
+    db.expire(expense)
+    db.refresh(expense)
+    assert expense.ai_status == "completed"
+
+
+def test_confirm_items_remain_unchanged(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id)
+    make_item(db, expense.id, original_name="Pad Thai")
+    result = confirm_user_expense(db, user.id, expense.id)
+    assert len(result.items) == 1
+    assert result.items[0].original_name == "Pad Thai"
+
+
+def test_confirm_receipt_link_remains_unchanged(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id)
+    receipt = ReceiptFileModel(
+        user_id=user.id,
+        expense_id=expense.id,
+        original_filename="r.jpg",
+        stored_filename="r.jpg",
+        file_path="/uploads/r.jpg",
+        file_size=500,
+        mime_type="image/jpeg",
+    )
+    db.add(receipt)
+    db.commit()
+    db.refresh(receipt)
+    confirm_user_expense(db, user.id, expense.id)
+    db.expire(receipt)
+    db.refresh(receipt)
+    assert receipt.expense_id == expense.id
+
+
+def test_confirm_ownership_does_not_change(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id)
+    result = confirm_user_expense(db, user.id, expense.id)
+    assert result.user_id == user.id
+
+
+def test_confirm_no_unrelated_fields_change(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id, title="Original Title",
+                               total_amount=Decimal("55.50"))
+    result = confirm_user_expense(db, user.id, expense.id)
+    assert result.title == "Original Title"
+    assert result.total_amount == Decimal("55.50")
+    assert result.category_id == category.id
+
+
+def test_confirm_internal_fields_not_in_response(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id)
+    result = confirm_user_expense(db, user.id, expense.id)
+    result_dict = result.model_dump()
+    for field in ("ai_confidence", "ai_status", "ai_raw_response",
+                  "language_detected", "deleted_at"):
+        assert field not in result_dict, f"Response must not expose: {field}"
+
+
+# ── 2. Ownership / not-found errors ──────────────────────────────────────────
+
+def test_confirm_unknown_expense_raises_404(db, user, category):
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        confirm_user_expense(db, user.id, 999999)
+    assert exc_info.value.status_code == 404
+
+
+def test_confirm_other_users_expense_raises_404(db, category):
+    user_a = make_user(db, username="conf_a", email="conf_a@example.com")
+    user_b = make_user(db, username="conf_b", email="conf_b@example.com")
+    expense = make_ai_expense(db, user_a.id, category.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        confirm_user_expense(db, user_b.id, expense.id)
+    assert exc_info.value.status_code == 404
+
+
+def test_confirm_soft_deleted_expense_raises_404(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id,
+                               deleted_at=datetime(2024, 1, 1))
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        confirm_user_expense(db, user.id, expense.id)
+    assert exc_info.value.status_code == 404
+
+
+# ── 3. AI-only restriction ────────────────────────────────────────────────────
+
+def test_confirm_manual_expense_raises_409(db, user, category):
+    expense = make_expense(db, user.id, category.id)  # input_method="manual"
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        confirm_user_expense(db, user.id, expense.id)
+    assert exc_info.value.status_code == 409
+    assert "AI-extracted" in exc_info.value.message
+
+
+# ── 4. Already confirmed ──────────────────────────────────────────────────────
+
+def test_confirm_already_confirmed_raises_409(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id, is_confirmed=True)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        confirm_user_expense(db, user.id, expense.id)
+    assert exc_info.value.status_code == 409
+    assert "already confirmed" in exc_info.value.message
+
+
+def test_confirm_already_confirmed_does_not_write_to_db(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id, is_confirmed=True)
+    original_updated_at = expense.updated_at
+    with pytest.raises(ExpenseServiceError):
+        confirm_user_expense(db, user.id, expense.id)
+    db.expire(expense)
+    db.refresh(expense)
+    # updated_at must not have changed
+    assert expense.updated_at == original_updated_at
+
+
+# ── 5. Required-field validation ──────────────────────────────────────────────
+
+def test_confirm_missing_category_raises_422(db, user, category):
+    expense = make_ai_expense(db, user.id, category_id=None)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        confirm_user_expense(db, user.id, expense.id)
+    assert exc_info.value.status_code == 422
+    assert "category" in exc_info.value.message.lower()
+
+
+def test_confirm_invalid_category_raises_422(db, user):
+    # "Invalid category" = category exists but is inactive (soft-delete or is_active=False).
+    # The inactive variant represents the category becoming invalid after extraction.
+    inactive = make_category(db, code="CONF_INVAL", name_en="Invalid",
+                              name_th="ไม่ถูกต้อง", is_active=False)
+    expense = make_ai_expense(db, user.id, inactive.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        confirm_user_expense(db, user.id, expense.id)
+    assert exc_info.value.status_code == 422
+
+
+def test_confirm_inactive_category_raises_422(db, user):
+    inactive = make_category(db, code="CONF_INACT", name_en="Inactive",
+                              name_th="ไม่ใช้งาน", is_active=False)
+    expense = make_ai_expense(db, user.id, inactive.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        confirm_user_expense(db, user.id, expense.id)
+    assert exc_info.value.status_code == 422
+
+
+def test_confirm_soft_deleted_category_raises_422(db, user):
+    deleted_cat = make_category(db, code="CONF_DEL", name_en="Deleted",
+                                 name_th="ลบแล้ว", deleted_at=datetime(2024, 1, 1))
+    expense = make_ai_expense(db, user.id, deleted_cat.id)
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        confirm_user_expense(db, user.id, expense.id)
+    assert exc_info.value.status_code == 422
+
+
+def test_confirm_blank_title_raises_422(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id, title="   ")
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        confirm_user_expense(db, user.id, expense.id)
+    assert exc_info.value.status_code == 422
+    assert "title" in exc_info.value.message.lower()
+
+
+def test_confirm_negative_total_raises_422(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id,
+                               total_amount=Decimal("-1.00"))
+    with pytest.raises(ExpenseServiceError) as exc_info:
+        confirm_user_expense(db, user.id, expense.id)
+    assert exc_info.value.status_code == 422
+    assert "total amount" in exc_info.value.message.lower()
+
+
+def test_confirm_zero_total_is_accepted(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id,
+                               total_amount=Decimal("0.00"))
+    result = confirm_user_expense(db, user.id, expense.id)
+    assert result.is_confirmed is True
+    assert result.total_amount == Decimal("0.00")
+
+
+# ── 6. Validation does not leave side effects ────────────────────────────────
+
+def test_failed_validation_does_not_confirm(db, user):
+    expense = make_ai_expense(db, user.id, category_id=None)  # will fail at category
+    with pytest.raises(ExpenseServiceError):
+        confirm_user_expense(db, user.id, expense.id)
+    db.expire(expense)
+    db.refresh(expense)
+    assert expense.is_confirmed is False
+
+
+# ── 7. DB failure rolls back ──────────────────────────────────────────────────
+
+def test_confirm_db_failure_rolls_back(db, user, category):
+    expense = make_ai_expense(db, user.id, category.id)
+    original_commit = db.commit
+
+    def fail_once():
+        db.commit = original_commit
+        raise RuntimeError("Simulated DB failure")
+
+    db.commit = fail_once
+
+    with pytest.raises(RuntimeError):
+        confirm_user_expense(db, user.id, expense.id)
+
+    db.expire(expense)
+    db.refresh(expense)
+    assert expense.is_confirmed is False

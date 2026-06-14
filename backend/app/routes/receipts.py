@@ -4,10 +4,13 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
+from app.schemas.expense import ExpenseResponse
 from app.schemas.receipt import ReceiptFileResponse
+from app.services.gemini_service import GeminiServiceError
 from app.services.receipt_service import (
     ReceiptServiceError,
     delete_user_receipt,
+    extract_receipt_to_draft_expense,
     get_user_receipt_by_id,
     get_user_receipts,
     upload_receipt,
@@ -97,3 +100,23 @@ def delete_receipt(
     if not deleted:
         raise HTTPException(status_code=404, detail="Receipt not found")
     return {"message": "Receipt deleted successfully"}
+
+
+@router.post(
+    "/{receipt_id}/extract",
+    response_model=ExpenseResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Extract Receipt Data",
+)
+def extract_receipt(
+    receipt_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ExpenseResponse:
+    """Extract data from a receipt with Gemini and create a draft expense."""
+    try:
+        return extract_receipt_to_draft_expense(db, current_user.id, receipt_id)
+    except ReceiptServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    except GeminiServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)

@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "mysql+pymysql://username:password@localhost:3306/smart_receipt_db"
     TEST_DATABASE_URL: str = "mysql+pymysql://username:password@localhost:3306/smart_receipt_db_test"
     GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.0-flash"
     UPLOAD_DIRECTORY: str = "uploads/receipts"
     UPLOAD_DIR: str = "uploads/receipts"
     MAX_RECEIPT_FILE_SIZE_MB: int = 10

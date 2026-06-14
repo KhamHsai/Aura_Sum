@@ -8,7 +8,7 @@ class Expense(Base):
 
     id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
     user_id = Column(BIGINT(unsigned=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
-    category_id = Column(INT(unsigned=True), ForeignKey("categories.id", ondelete="RESTRICT"), nullable=False, index=True)
+    category_id = Column(INT(unsigned=True), ForeignKey("categories.id", ondelete="RESTRICT"), nullable=True, index=True)
     title = Column(String(255), nullable=False)
     merchant_name = Column(String(255), nullable=True)
     receipt_number = Column(String(100), nullable=True)

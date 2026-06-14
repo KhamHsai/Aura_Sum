@@ -23,6 +23,9 @@ from app.services.expense_service import (
     get_user_expense_by_id,
     update_user_expense,
     delete_user_expense,
+    link_receipt_to_expense,
+    unlink_receipt_from_expense,
+    confirm_user_expense,
     ExpenseServiceError,
 )
 
@@ -45,6 +48,9 @@ __all__ = [
     "get_user_expense_by_id",
     "update_user_expense",
     "delete_user_expense",
+    "link_receipt_to_expense",
+    "unlink_receipt_from_expense",
+    "confirm_user_expense",
     "ExpenseServiceError",
 ]
 

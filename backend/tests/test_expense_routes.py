@@ -654,3 +654,474 @@ def test_existing_tests_pass_smoke_check(token, category_id):
     assert get_expenses(token).status_code == 200
     assert delete_expense(token, created["id"]).status_code == 200
     assert get_expense_detail(token, created["id"]).status_code == 404
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Receipt-link route tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from app.models.receipt_file import ReceiptFile
+
+
+def make_receipt_in_db(user_id: int, *, expense_id=None, deleted_at=None) -> int:
+    """Insert a ReceiptFile row and return its id."""
+    import uuid
+    db = TestingSessionLocal()
+    stored = f"{uuid.uuid4().hex}.jpg"
+    receipt = ReceiptFile(
+        user_id=user_id,
+        expense_id=expense_id,
+        original_filename="receipt.jpg",
+        stored_filename=stored,
+        file_path=f"/uploads/{stored}",
+        mime_type="image/jpeg",
+        file_size=1000,
+        upload_status="uploaded",
+        deleted_at=deleted_at,
+    )
+    db.add(receipt)
+    db.commit()
+    db.refresh(receipt)
+    rid = receipt.id
+    db.close()
+    return rid
+
+
+def get_user_id_from_token(token: str) -> int:
+    me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
+    return me["id"]
+
+
+def link_receipt(token: str, expense_id: int, receipt_id: int):
+    return client.post(
+        f"/api/expenses/{expense_id}/receipts/{receipt_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def unlink_receipt(token: str, expense_id: int, receipt_id: int):
+    return client.delete(
+        f"/api/expenses/{expense_id}/receipts/{receipt_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+# ── Fixtures for link/unlink tests ───────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def clean_receipts(clean_db):
+    """clean_db already runs; just ensure ReceiptFile rows are cleared too."""
+    db = TestingSessionLocal()
+    db.query(ReceiptFile).delete()
+    db.commit()
+    db.close()
+    yield
+    db = TestingSessionLocal()
+    db.query(ReceiptFile).delete()
+    db.commit()
+    db.close()
+
+
+# ── Link tests ────────────────────────────────────────────────────────────────
+
+def test_authenticated_user_can_link_receipt_to_expense(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense = create_expense_via_api(token, category_id)
+    rid = make_receipt_in_db(uid)
+    res = link_receipt(token, expense["id"], rid)
+    assert res.status_code == 200
+
+
+def test_link_returns_200(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense = create_expense_via_api(token, category_id)
+    rid = make_receipt_in_db(uid)
+    res = link_receipt(token, expense["id"], rid)
+    assert res.status_code == 200
+
+
+def test_link_response_shows_correct_expense_id(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense = create_expense_via_api(token, category_id)
+    rid = make_receipt_in_db(uid)
+    res = link_receipt(token, expense["id"], rid)
+    assert res.json()["expense_id"] == expense["id"]
+
+
+def test_link_same_receipt_again_succeeds(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense = create_expense_via_api(token, category_id)
+    rid = make_receipt_in_db(uid, expense_id=expense["id"])
+    res = link_receipt(token, expense["id"], rid)
+    assert res.status_code == 200
+
+
+def test_link_receipt_already_elsewhere_returns_409(token, category_id):
+    uid = get_user_id_from_token(token)
+    exp_a = create_expense_via_api(token, category_id, title="A")
+    exp_b = create_expense_via_api(token, category_id, title="B")
+    rid = make_receipt_in_db(uid, expense_id=exp_a["id"])
+    res = link_receipt(token, exp_b["id"], rid)
+    assert res.status_code == 409
+
+
+def test_link_unknown_expense_returns_404(token, category_id):
+    uid = get_user_id_from_token(token)
+    rid = make_receipt_in_db(uid)
+    res = link_receipt(token, 999999, rid)
+    assert res.status_code == 404
+
+
+def test_link_unknown_receipt_returns_404(token, category_id):
+    expense = create_expense_via_api(token, category_id)
+    res = link_receipt(token, expense["id"], 999999)
+    assert res.status_code == 404
+
+
+def test_link_another_users_expense_returns_404(token, other_token, category_id):
+    uid = get_user_id_from_token(token)
+    other_expense = create_expense_via_api(other_token, category_id)
+    rid = make_receipt_in_db(uid)
+    res = link_receipt(token, other_expense["id"], rid)
+    assert res.status_code == 404
+
+
+def test_link_another_users_receipt_returns_404(token, other_token, category_id):
+    other_uid = get_user_id_from_token(other_token)
+    expense = create_expense_via_api(token, category_id)
+    rid = make_receipt_in_db(other_uid)
+    res = link_receipt(token, expense["id"], rid)
+    assert res.status_code == 404
+
+
+def test_link_soft_deleted_expense_returns_404(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense = create_expense_via_api(token, category_id)
+    soft_delete_expense_in_db(expense["id"])
+    rid = make_receipt_in_db(uid)
+    res = link_receipt(token, expense["id"], rid)
+    assert res.status_code == 404
+
+
+def test_link_soft_deleted_receipt_returns_404(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense = create_expense_via_api(token, category_id)
+    rid = make_receipt_in_db(uid, deleted_at=datetime(2024, 1, 1))
+    res = link_receipt(token, expense["id"], rid)
+    assert res.status_code == 404
+
+
+def test_link_missing_token_returns_401(category_id):
+    res = client.post("/api/expenses/1/receipts/1")
+    assert res.status_code == 401
+
+
+def test_link_invalid_token_returns_401(category_id):
+    res = client.post(
+        "/api/expenses/1/receipts/1",
+        headers={"Authorization": "Bearer bad.token.here"},
+    )
+    assert res.status_code == 401
+
+
+# ── Unlink tests ──────────────────────────────────────────────────────────────
+
+def test_authenticated_user_can_unlink_receipt(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense = create_expense_via_api(token, category_id)
+    rid = make_receipt_in_db(uid, expense_id=expense["id"])
+    res = unlink_receipt(token, expense["id"], rid)
+    assert res.status_code == 200
+
+
+def test_unlink_returns_200(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense = create_expense_via_api(token, category_id)
+    rid = make_receipt_in_db(uid, expense_id=expense["id"])
+    res = unlink_receipt(token, expense["id"], rid)
+    assert res.status_code == 200
+
+
+def test_unlink_response_shows_null_expense_id(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense = create_expense_via_api(token, category_id)
+    rid = make_receipt_in_db(uid, expense_id=expense["id"])
+    res = unlink_receipt(token, expense["id"], rid)
+    assert res.json()["expense_id"] is None
+
+
+def test_unlink_wrong_expense_returns_409(token, category_id):
+    uid = get_user_id_from_token(token)
+    exp_a = create_expense_via_api(token, category_id, title="A")
+    exp_b = create_expense_via_api(token, category_id, title="B")
+    rid = make_receipt_in_db(uid, expense_id=exp_a["id"])
+    res = unlink_receipt(token, exp_b["id"], rid)
+    assert res.status_code == 409
+
+
+def test_unlink_unlinked_receipt_returns_409(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense = create_expense_via_api(token, category_id)
+    rid = make_receipt_in_db(uid)  # not linked
+    res = unlink_receipt(token, expense["id"], rid)
+    assert res.status_code == 409
+
+
+def test_unlink_missing_token_returns_401(category_id):
+    res = client.delete("/api/expenses/1/receipts/1")
+    assert res.status_code == 401
+
+
+def test_unlink_invalid_token_returns_401():
+    res = client.delete(
+        "/api/expenses/1/receipts/1",
+        headers={"Authorization": "Bearer bad.token.here"},
+    )
+    assert res.status_code == 401
+
+
+def test_existing_expense_tests_still_pass(token, category_id):
+    """Smoke: create, list, detail, update, delete still all work."""
+    created = create_expense_via_api(token, category_id, title="Smoke2")
+    assert get_expense_detail(token, created["id"]).status_code == 200
+    assert get_expenses(token).status_code == 200
+    assert put_expense(token, created["id"], {"title": "Updated Smoke"}).status_code == 200
+    assert delete_expense(token, created["id"]).status_code == 200
+    assert get_expense_detail(token, created["id"]).status_code == 404
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST /api/expenses/{expense_id}/confirm  route tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from decimal import Decimal as _Decimal
+
+
+def make_ai_expense_in_db(
+    user_id: int,
+    category_id: int | None,
+    *,
+    title: str = "AI Receipt",
+    total_amount: str = "120.00",
+    is_confirmed: bool = False,
+    deleted_at=None,
+) -> int:
+    """Insert an AI-extracted draft expense directly in the test DB and return its id."""
+    db = TestingSessionLocal()
+    expense = Expense(
+        user_id=user_id,
+        category_id=category_id,
+        title=title,
+        receipt_date=date(2025, 6, 1),
+        total_amount=_Decimal(total_amount),
+        currency="THB",
+        input_method="ai",
+        ai_status="completed",
+        is_confirmed=is_confirmed,
+    )
+    if deleted_at is not None:
+        expense.deleted_at = deleted_at
+    db.add(expense)
+    db.commit()
+    db.refresh(expense)
+    expense_id = expense.id
+    db.close()
+    return expense_id
+
+
+def confirm_expense(token: str, expense_id: int):
+    return client.post(
+        f"/api/expenses/{expense_id}/confirm",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+# ── Happy path ────────────────────────────────────────────────────────────────
+
+def test_confirm_authenticated_user_can_confirm_ai_expense(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id)
+    res = confirm_expense(token, expense_id)
+    assert res.status_code == 200
+
+
+def test_confirm_returns_200(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id)
+    res = confirm_expense(token, expense_id)
+    assert res.status_code == 200
+
+
+def test_confirm_response_uses_expense_response_schema(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id)
+    res = confirm_expense(token, expense_id)
+    data = res.json()
+    # All ExpenseResponse fields must be present
+    for field in ("id", "user_id", "category_id", "title", "total_amount",
+                  "is_confirmed", "created_at", "updated_at", "items"):
+        assert field in data, f"Missing field in response: {field}"
+
+
+def test_confirm_response_shows_is_confirmed_true(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id)
+    res = confirm_expense(token, expense_id)
+    assert res.json()["is_confirmed"] is True
+
+
+def test_confirm_response_includes_nested_items(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id)
+    # Add an item directly
+    db = TestingSessionLocal()
+    from app.models.expense_item import ExpenseItem as ExpItem
+    item = ExpItem(
+        expense_id=expense_id,
+        original_name="Green Curry",
+        quantity=_Decimal("1"),
+        total_price=_Decimal("80.00"),
+    )
+    db.add(item)
+    db.commit()
+    db.close()
+    res = confirm_expense(token, expense_id)
+    assert len(res.json()["items"]) == 1
+    assert res.json()["items"][0]["original_name"] == "Green Curry"
+
+
+def test_confirm_internal_fields_not_exposed(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id)
+    res = confirm_expense(token, expense_id)
+    data = res.json()
+    for field in ("deleted_at", "ai_confidence", "ai_status",
+                  "ai_raw_response", "language_detected"):
+        assert field not in data, f"Response must not expose: {field}"
+
+
+# ── 404 errors ────────────────────────────────────────────────────────────────
+
+def test_confirm_unknown_expense_returns_404(token):
+    res = confirm_expense(token, 999999)
+    assert res.status_code == 404
+
+
+def test_confirm_other_users_expense_returns_404(token, other_token, category_id):
+    other_uid = get_user_id_from_token(other_token)
+    expense_id = make_ai_expense_in_db(other_uid, category_id)
+    res = confirm_expense(token, expense_id)
+    assert res.status_code == 404
+
+
+def test_confirm_soft_deleted_expense_returns_404(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id,
+                                        deleted_at=datetime(2024, 1, 1))
+    res = confirm_expense(token, expense_id)
+    assert res.status_code == 404
+
+
+# ── 409 errors ────────────────────────────────────────────────────────────────
+
+def test_confirm_manual_expense_returns_409(token, category_id):
+    # Create a normal (manual) expense via API
+    created = create_expense_via_api(token, category_id, title="Manual")
+    res = confirm_expense(token, created["id"])
+    assert res.status_code == 409
+
+
+def test_confirm_already_confirmed_expense_returns_409(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id, is_confirmed=True)
+    res = confirm_expense(token, expense_id)
+    assert res.status_code == 409
+
+
+# ── 422 errors ────────────────────────────────────────────────────────────────
+
+def test_confirm_missing_category_returns_422(token):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id=None)
+    res = confirm_expense(token, expense_id)
+    assert res.status_code == 422
+
+
+def test_confirm_blank_title_returns_422(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id, title="   ")
+    res = confirm_expense(token, expense_id)
+    assert res.status_code == 422
+
+
+def test_confirm_negative_total_returns_422(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id, total_amount="-5.00")
+    res = confirm_expense(token, expense_id)
+    assert res.status_code == 422
+
+
+# ── Auth errors ───────────────────────────────────────────────────────────────
+
+def test_confirm_missing_token_returns_401(category_id):
+    res = client.post("/api/expenses/1/confirm")
+    assert res.status_code == 401
+
+
+def test_confirm_invalid_token_returns_401(category_id):
+    res = client.post(
+        "/api/expenses/1/confirm",
+        headers={"Authorization": "Bearer bad.token.here"},
+    )
+    assert res.status_code == 401
+
+
+# ── Confirmed expense remains accessible ─────────────────────────────────────
+
+def test_confirmed_expense_still_visible_in_list(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id)
+    confirm_expense(token, expense_id)
+    res = get_expenses(token)
+    ids = [e["id"] for e in res.json()]
+    assert expense_id in ids
+
+
+def test_confirmed_expense_still_available_in_detail(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id)
+    confirm_expense(token, expense_id)
+    res = get_expense_detail(token, expense_id)
+    assert res.status_code == 200
+    assert res.json()["is_confirmed"] is True
+
+
+# ── Update still works before confirmation ────────────────────────────────────
+
+def test_update_before_confirm_still_works(token, category_id):
+    uid = get_user_id_from_token(token)
+    expense_id = make_ai_expense_in_db(uid, category_id, title="Before Update")
+    put_res = put_expense(token, expense_id, {"title": "After Update"})
+    assert put_res.status_code == 200
+    assert put_res.json()["title"] == "After Update"
+    confirm_res = confirm_expense(token, expense_id)
+    assert confirm_res.status_code == 200
+    assert confirm_res.json()["title"] == "After Update"
+    assert confirm_res.json()["is_confirmed"] is True
+
+
+# ── Full suite smoke ──────────────────────────────────────────────────────────
+
+def test_full_suite_confirm_smoke(token, category_id):
+    """Smoke: create, list, detail, update, confirm, delete still all work."""
+    uid = get_user_id_from_token(token)
+    # Manual expense workflow
+    created = create_expense_via_api(token, category_id, title="Smoke Confirm")
+    assert get_expense_detail(token, created["id"]).status_code == 200
+    assert get_expenses(token).status_code == 200
+    assert put_expense(token, created["id"], {"title": "Updated"}).status_code == 200
+    assert delete_expense(token, created["id"]).status_code == 200
+    # AI expense confirm workflow
+    expense_id = make_ai_expense_in_db(uid, category_id)
+    assert confirm_expense(token, expense_id).status_code == 200
+    assert get_expense_detail(token, expense_id).json()["is_confirmed"] is True

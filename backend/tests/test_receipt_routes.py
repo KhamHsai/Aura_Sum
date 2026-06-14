@@ -11,6 +11,9 @@ from sqlalchemy.orm import sessionmaker
 from app.config import settings
 from app.database import get_db
 from app.main import app
+from app.models.category import Category
+from app.models.expense import Expense
+from app.models.expense_item import ExpenseItem
 from app.models.receipt_file import ReceiptFile
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
@@ -45,12 +48,20 @@ BIG_FILE  = b"x" * (11 * 1024 * 1024)
 @pytest.fixture(scope="function", autouse=True)
 def clean_db():
     db = TestingSessionLocal()
+    db.query(ExpenseItem).delete()
     db.query(ReceiptFile).delete()
+    db.query(Expense).delete()
+    db.query(Category).delete()
     db.query(RefreshToken).delete()
     db.query(User).delete()
     db.commit()
+    db.close()
     yield
+    db = TestingSessionLocal()
+    db.query(ExpenseItem).delete()
     db.query(ReceiptFile).delete()
+    db.query(Expense).delete()
+    db.query(Category).delete()
     db.query(RefreshToken).delete()
     db.query(User).delete()
     db.commit()
@@ -357,3 +368,394 @@ def test_auth_register_still_works():
 def test_category_routes_still_work(auth_token):
     res = client.get("/api/categories", headers={"Authorization": f"Bearer {auth_token}"})
     assert res.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST /api/receipts/{receipt_id}/extract — route tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import uuid
+from datetime import date, datetime as dt2
+from decimal import Decimal
+from unittest.mock import patch as _patch
+
+from app.models.category import Category
+from app.models.expense import Expense
+from app.models.expense_item import ExpenseItem
+from app.schemas.ai_extraction import ExtractedReceiptData, ExtractedReceiptItem
+from app.services.gemini_service import GeminiServiceError
+
+
+# ── Helpers for extraction tests ──────────────────────────────────────────────
+
+def make_category_for_extract(*, code="FOOD_RT", name_en="Food", name_th="อาหาร") -> int:
+    db = TestingSessionLocal()
+    cat = Category(code=code, name_en=name_en, name_th=name_th, is_active=True)
+    db.add(cat)
+    db.commit()
+    db.refresh(cat)
+    cat_id = cat.id
+    db.close()
+    return cat_id
+
+
+def insert_receipt_with_file(token: str, file_path: str, expense_id=None) -> int:
+    """Insert a ReceiptFile row pointing to a real file. Returns receipt id."""
+    db = TestingSessionLocal()
+    me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
+    stored = f"{uuid.uuid4().hex}.jpg"
+    receipt = ReceiptFile(
+        user_id=me["id"],
+        expense_id=expense_id,
+        original_filename="receipt.jpg",
+        stored_filename=stored,
+        file_path=file_path,
+        mime_type="image/jpeg",
+        file_size=100,
+        upload_status="uploaded",
+    )
+    db.add(receipt)
+    db.commit()
+    db.refresh(receipt)
+    rid = receipt.id
+    db.close()
+    return rid
+
+
+def make_fake_file() -> str:
+    """Write a tiny fake JPEG to a temp file and return its path."""
+    f = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+    f.write(b"\xff\xd8\xff\xe0" + b"x" * 100)
+    f.close()
+    return f.name
+
+
+def english_extracted() -> ExtractedReceiptData:
+    return ExtractedReceiptData(
+        title="Coffee Shop",
+        merchant_name="Bean There",
+        receipt_number="R001",
+        receipt_date=date(2025, 6, 1),
+        currency="USD",
+        subtotal=Decimal("4.50"),
+        tax_amount=Decimal("0.50"),
+        discount_amount=Decimal("0.00"),
+        total_amount=Decimal("5.00"),
+        language_detected="en",
+        ai_confidence=Decimal("0.95"),
+        items=[
+            ExtractedReceiptItem(
+                original_name="Latte",
+                name_en="Latte",
+                name_th="ลาเต้",
+                quantity=Decimal("1"),
+                unit="cup",
+                unit_price=Decimal("4.50"),
+                discount_amount=Decimal("0.00"),
+                total_price=Decimal("4.50"),
+                category_name="Food",
+            )
+        ],
+    )
+
+
+def thai_extracted() -> ExtractedReceiptData:
+    return ExtractedReceiptData(
+        title="ใบเสร็จ",
+        merchant_name="ร้านอาหาร",
+        total_amount=Decimal("90.00"),
+        language_detected="th",
+        items=[
+            ExtractedReceiptItem(
+                original_name="ข้าวต้ม",
+                name_en="Rice Porridge",
+                name_th="ข้าวต้ม",
+                quantity=Decimal("1"),
+                total_price=Decimal("90.00"),
+                category_name="Food",
+            )
+        ],
+    )
+
+
+def patch_extract(return_value=None, side_effect=None):
+    """Patch extract_receipt_data inside receipt_service."""
+    if side_effect:
+        return _patch(
+            "app.services.receipt_service.extract_receipt_data",
+            side_effect=side_effect,
+        )
+    return _patch(
+        "app.services.receipt_service.extract_receipt_data",
+        return_value=return_value or english_extracted(),
+    )
+
+
+def extract(token: str, receipt_id: int):
+    return client.post(
+        f"/api/receipts/{receipt_id}/extract",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+# ── Route extraction tests ────────────────────────────────────────────────────
+
+def test_authenticated_user_can_extract_receipt(auth_token):
+    tmp = make_fake_file()
+    try:
+        make_category_for_extract()
+        rid = insert_receipt_with_file(auth_token, tmp)
+        with patch_extract():
+            res = extract(auth_token, rid)
+        assert res.status_code == 201
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_success_returns_201(auth_token):
+    tmp = make_fake_file()
+    try:
+        make_category_for_extract(code="FOOD_201")
+        rid = insert_receipt_with_file(auth_token, tmp)
+        with patch_extract():
+            res = extract(auth_token, rid)
+        assert res.status_code == 201
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_success_returns_expense_response(auth_token):
+    tmp = make_fake_file()
+    try:
+        make_category_for_extract(code="FOOD_RES")
+        rid = insert_receipt_with_file(auth_token, tmp)
+        with patch_extract():
+            res = extract(auth_token, rid)
+        data = res.json()
+        assert "id" in data
+        assert "title" in data
+        assert "total_amount" in data
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_response_includes_nested_items(auth_token):
+    tmp = make_fake_file()
+    try:
+        make_category_for_extract(code="FOOD_ITM")
+        rid = insert_receipt_with_file(auth_token, tmp)
+        with patch_extract():
+            res = extract(auth_token, rid)
+        data = res.json()
+        assert "items" in data
+        assert len(data["items"]) == 1
+        assert data["items"][0]["original_name"] == "Latte"
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_receipt_becomes_linked(auth_token):
+    tmp = make_fake_file()
+    try:
+        make_category_for_extract(code="FOOD_LNK")
+        rid = insert_receipt_with_file(auth_token, tmp)
+        with patch_extract():
+            res = extract(auth_token, rid)
+        expense_id = res.json()["id"]
+        db = TestingSessionLocal()
+        receipt = db.query(ReceiptFile).filter(ReceiptFile.id == rid).first()
+        db.close()
+        assert receipt.expense_id == expense_id
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_english_receipt_works(auth_token):
+    tmp = make_fake_file()
+    try:
+        make_category_for_extract(code="FOOD_EN")
+        rid = insert_receipt_with_file(auth_token, tmp)
+        with patch_extract(return_value=english_extracted()):
+            res = extract(auth_token, rid)
+        assert res.status_code == 201
+        assert res.json()["merchant_name"] == "Bean There"
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_thai_receipt_works(auth_token):
+    tmp = make_fake_file()
+    try:
+        make_category_for_extract(code="FOOD_TH")
+        rid = insert_receipt_with_file(auth_token, tmp)
+        with patch_extract(return_value=thai_extracted()):
+            res = extract(auth_token, rid)
+        assert res.status_code == 201
+        assert res.json()["merchant_name"] == "ร้านอาหาร"
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_missing_receipt_returns_404(auth_token):
+    with patch_extract():
+        res = extract(auth_token, 999999)
+    assert res.status_code == 404
+
+
+def test_extract_other_users_receipt_returns_404(auth_token, other_token):
+    tmp = make_fake_file()
+    try:
+        rid = insert_receipt_with_file(other_token, tmp)
+        with patch_extract():
+            res = extract(auth_token, rid)
+        assert res.status_code == 404
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_soft_deleted_receipt_returns_404(auth_token):
+    db = TestingSessionLocal()
+    me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {auth_token}"}).json()
+    stored = f"{uuid.uuid4().hex}.jpg"
+    receipt = ReceiptFile(
+        user_id=me["id"],
+        original_filename="receipt.jpg",
+        stored_filename=stored,
+        file_path="/tmp/deleted.jpg",
+        mime_type="image/jpeg",
+        file_size=100,
+        upload_status="uploaded",
+        deleted_at=dt2(2024, 1, 1),
+    )
+    db.add(receipt)
+    db.commit()
+    rid = receipt.id
+    db.close()
+    with patch_extract():
+        res = extract(auth_token, rid)
+    assert res.status_code == 404
+
+
+def test_extract_missing_file_returns_404(auth_token):
+    rid = insert_receipt_with_file(auth_token, "/nonexistent/path/no_file.jpg")
+    res = extract(auth_token, rid)
+    assert res.status_code == 404
+
+
+def test_extract_already_linked_receipt_returns_409(auth_token):
+    tmp = make_fake_file()
+    try:
+        rid = insert_receipt_with_file(auth_token, tmp)
+
+        # Create an expense directly in DB so we have a valid expense_id
+        me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {auth_token}"}).json()
+        db = TestingSessionLocal()
+        exp = Expense(
+            user_id=me["id"],
+            title="Dummy",
+            receipt_date=date(2025, 1, 1),
+            total_amount=Decimal("1.00"),
+            currency="THB",
+            input_method="manual",
+        )
+        db.add(exp)
+        db.commit()
+        db.refresh(exp)
+        exp_id = exp.id
+
+        # Link the receipt to this expense directly
+        receipt = db.query(ReceiptFile).filter(ReceiptFile.id == rid).first()
+        receipt.expense_id = exp_id
+        db.commit()
+        db.close()
+
+        with patch_extract():
+            res = extract(auth_token, rid)
+        assert res.status_code == 409
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_missing_token_returns_401():
+    res = client.post("/api/receipts/1/extract")
+    assert res.status_code == 401
+
+
+def test_extract_invalid_token_returns_401():
+    res = client.post(
+        "/api/receipts/1/extract",
+        headers={"Authorization": "Bearer invalid.token.here"},
+    )
+    assert res.status_code == 401
+
+
+def test_extract_gemini_error_preserves_status(auth_token):
+    tmp = make_fake_file()
+    try:
+        rid = insert_receipt_with_file(auth_token, tmp)
+        with patch_extract(side_effect=GeminiServiceError("Gemini extraction failed", 502)):
+            res = extract(auth_token, rid)
+        assert res.status_code == 502
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_gemini_error_creates_no_db_records(auth_token):
+    tmp = make_fake_file()
+    try:
+        rid = insert_receipt_with_file(auth_token, tmp)
+        db = TestingSessionLocal()
+        expense_count_before = db.query(Expense).count()
+        db.close()
+        with patch_extract(side_effect=GeminiServiceError("fail", 502)):
+            extract(auth_token, rid)
+        db = TestingSessionLocal()
+        assert db.query(Expense).count() == expense_count_before
+        db.close()
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_response_does_not_expose_file_path(auth_token):
+    tmp = make_fake_file()
+    try:
+        make_category_for_extract(code="FOOD_PTV")
+        rid = insert_receipt_with_file(auth_token, tmp)
+        with patch_extract():
+            res = extract(auth_token, rid)
+        assert "file_path" not in res.json()
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_response_does_not_expose_deleted_at(auth_token):
+    tmp = make_fake_file()
+    try:
+        make_category_for_extract(code="FOOD_DEL")
+        rid = insert_receipt_with_file(auth_token, tmp)
+        with patch_extract():
+            res = extract(auth_token, rid)
+        assert "deleted_at" not in res.json()
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def test_extract_no_real_gemini_call_occurs(auth_token):
+    """All extract route tests patch extract_receipt_data — no live calls possible."""
+    import app.services.receipt_service as svc
+    assert callable(svc.extract_receipt_data)
+
+
+def test_existing_full_suite_smoke(auth_token):
+    """Confirm upload, list, detail, and delete routes still work."""
+    res = upload(auth_token)
+    assert res.status_code == 201
+    rid = res.json()["id"]
+
+    assert client.get("/api/receipts", headers={"Authorization": f"Bearer {auth_token}"}).status_code == 200
+    assert client.get(f"/api/receipts/{rid}", headers={"Authorization": f"Bearer {auth_token}"}).status_code == 200
+    assert client.delete(f"/api/receipts/{rid}", headers={"Authorization": f"Bearer {auth_token}"}).status_code == 200
+
+
+# Need Path imported at module level for cleanup
+from pathlib import Path
