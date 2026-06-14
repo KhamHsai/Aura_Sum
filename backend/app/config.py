@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     TEST_DATABASE_URL: str = "mysql+pymysql://username:password@localhost:3306/smart_receipt_db_test"
     GEMINI_API_KEY: str = ""
     UPLOAD_DIRECTORY: str = "uploads/receipts"
+    UPLOAD_DIR: str = "uploads/receipts"
+    MAX_RECEIPT_FILE_SIZE_MB: int = 10
     FRONTEND_URL: str = ""
 
     # JWT configurations (JWT_SECRET_KEY has no default and must be provided in the environment)

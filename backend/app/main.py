@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routes import auth_router, health_router
+from app.routes import auth_router, health_router, categories_router, receipts_router
 
 app = FastAPI(
     title="Smart Receipt API",
@@ -9,3 +9,6 @@ app = FastAPI(
 # Register routes
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(categories_router)
+app.include_router(receipts_router)
+
