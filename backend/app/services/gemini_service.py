@@ -64,7 +64,6 @@ class GeminiServiceError(Exception):
 READ_PROMPT = """Read this receipt image and transcribe ALL text you can see, exactly as printed.
 
 Include every line:
-- Shop / restaurant name and address
 - TAX ID or VAT registration number
 - Date and time
 - Receipt or invoice number

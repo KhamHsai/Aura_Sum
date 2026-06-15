@@ -316,12 +316,11 @@ def extract_receipt_to_draft_expense(
         receipt_date_resolved = _parse_thai_be_date(ai_raw_text)
 
     # 4b. Fix category: if AI returned null or generic "Other", use keyword
-    #     fallback based on merchant name and first few item names.
+    #     fallback based on paid_to and first few item names.
     category_text = extracted.category_name
     if not category_text or category_text.strip().lower() == "other":
         search_corpus = " ".join(filter(None, [
             extracted.paid_to,
-            extracted.merchant_name,
         ] + [
             (item.original_name or item.name_th or item.name_en or "")
             for item in extracted.items[:5]
@@ -335,8 +334,8 @@ def extract_receipt_to_draft_expense(
     # 5. Category matching — use resolved category text.
     expense_category_id = _find_category_by_name(db, category_text)
 
-    # 6. Build paid_to: prefer explicit paid_to, fall back to merchant_name.
-    paid_to = extracted.paid_to or extracted.merchant_name
+    # 6. Build paid_to: use explicit paid_to only.
+    paid_to = extracted.paid_to
 
     # 7. Determine receipt_date — use extracted or parsed date, not today.
     receipt_date = receipt_date_resolved or date.today()
