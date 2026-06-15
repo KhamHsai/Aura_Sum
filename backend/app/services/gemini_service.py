@@ -1,23 +1,34 @@
 """AI receipt-extraction service — powered by OpenRouter.
 
+Strategy: two-step pipeline
+  Step 1 — READ (vision AI call): Ask AI to transcribe all text from the receipt image.
+  Step 2 — PARSE (our Python code): Extract structured fields from that plain text.
+
+This is better than asking one weak model to do everything at once because:
+- The model is reliable at reading/transcribing text from images
+- Python regex/parsing is 100% reliable at converting what was read into structured data
+- No second AI call needed → faster, no quota waste
+
+The raw OCR text is also passed back so receipt_service can apply additional
+fallbacks (category keyword matching, etc.).
+
 Public API
 ----------
-    extract_receipt_data(file_path, mime_type) -> ExtractedReceiptData
-    GeminiServiceError   (name kept for backward compatibility)
-
-Sends the receipt image to OpenRouter using the OpenAI-compatible API.
-The model is configurable via OPENROUTER_MODEL in .env.
+    extract_receipt_data(file_path, mime_type) -> (ExtractedReceiptData, str)
+    GeminiServiceError
 """
 
 import base64
 import json
 import re
+from datetime import date, time
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from openai import OpenAI
 
 from app.config import settings
-from app.schemas.ai_extraction import ExtractedReceiptData
+from app.schemas.ai_extraction import ExtractedReceiptData, ExtractedReceiptItem
 
 # ---------------------------------------------------------------------------
 # Supported MIME types
@@ -33,7 +44,7 @@ SUPPORTED_MIME_TYPES: frozenset[str] = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# Custom exception (name kept so routes don't need changes)
+# Custom exception
 # ---------------------------------------------------------------------------
 
 
@@ -47,76 +58,320 @@ class GeminiServiceError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Extraction prompt
+# Step 1 prompt — just read, don't structure
 # ---------------------------------------------------------------------------
 
-EXTRACTION_PROMPT = """You are extracting structured data from a receipt image or PDF.
+READ_PROMPT = """Read this receipt image and transcribe ALL text you can see, exactly as printed.
 
-Instructions:
-- The receipt is written in English or Thai only.
-- Return JSON only. Do not include Markdown. Do not include code fences.
-- Do not invent values. Use null only when a value is truly not visible on the receipt.
-- IMPORTANT: Read every detail carefully from the receipt image before setting any field to null.
-- receipt_date: READ the actual date printed on the receipt (look for วันที่, Date, or any date format). Use ISO format YYYY-MM-DD. IMPORTANT: Thai receipts use Buddhist Era (BE) years — subtract 543 to convert to CE (e.g. 69 → 2026, 67 → 2024, 68 → 2025). A 2-digit year like "69" means BE 2569 = CE 2026. Do NOT use today's date.
-- receipt_time: READ the time printed on the receipt if visible. Use 24-hour HH:MM:SS format.
-- tax_id: READ the tax ID, VAT registration number, เลขประจำตัวผู้เสียภาษี, or business registration number printed on the receipt. This is often a 13-digit number in Thailand.
-- receipt_number: READ the receipt/invoice/bill number printed on the receipt (เลขที่, No., Receipt No., etc.).
-- paid_to: READ the shop name, restaurant name, or business name at the top of the receipt.
-- payment_method: READ how the payment was made (Cash, Card, QR, โอนเงิน, เงินสด, etc.) if shown.
-- subtotal: READ the subtotal amount before tax/discount if shown separately.
-- tax_amount: READ the VAT or tax amount if shown separately.
-- discount_amount: READ the discount amount if any.
-- total_amount: READ the final total amount paid. This is REQUIRED and must not be null.
-- Use uppercase currency codes (THB, USD). Do not include currency symbols or commas in numbers.
-- Use plain decimal numbers (e.g. 150.00) for all monetary values.
-- Detect the receipt language as "en" for English or "th" for Thai only.
-- Extract ALL line items from the receipt — every individual product, dish, or service listed.
-- For each line item, read the original name exactly as printed, and provide both English (name_en) and Thai (name_th) translations.
-- Set ai_confidence as a decimal between 0.00 and 1.00 reflecting your confidence.
-- category_name: guess the best expense category in English using EXACTLY one of these values: Food & Drink, Transport, Shopping, Accommodation, Healthcare, Entertainment, Education, Utilities, Other. For restaurants and food purchases use "Food & Drink".
+Include every line:
+- Shop / restaurant name and address
+- TAX ID or VAT registration number
+- Date and time
+- Receipt or invoice number
+- Every line item: code, name, quantity, and price
+- Subtotal, VAT/tax, discount, total amount
+- Payment method (cash, card, PromptPay, QR, etc.)
 
-Return exactly this JSON structure (no extra fields, no surrounding text):
-{
-  "paid_to": null,
-  "tax_id": null,
-  "category_name": null,
-  "receipt_number": null,
-  "receipt_date": null,
-  "receipt_time": null,
-  "document_type": null,
-  "payment_method": null,
-  "currency": "THB",
-  "subtotal": null,
-  "tax_amount": null,
-  "discount_amount": null,
-  "total_amount": "0.00",
-  "language_detected": "th",
-  "ai_confidence": "0.90",
-  "items": [
-    {
-      "original_name": null,
-      "name_en": null,
-      "name_th": null,
-      "quantity": null,
-      "unit": null,
-      "unit_price": null,
-      "discount_amount": null,
-      "total_price": null,
-      "category_name": null
-    },
-    {
-      "original_name": null,
-      "name_en": null,
-      "name_th": null,
-      "quantity": null,
-      "unit": null,
-      "unit_price": null,
-      "discount_amount": null,
-      "total_price": null,
-      "category_name": null
-    }
-  ]
-}"""
+Important:
+- Copy Thai text exactly as you see it, character by character
+- Copy numbers exactly (do not round or change)
+- If a field is not visible, skip it — do not guess
+
+Output only the transcribed text. No analysis, no JSON, no explanation."""
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — Python parser: extract fields from OCR text
+# ---------------------------------------------------------------------------
+
+# ── Date helpers ──────────────────────────────────────────────────────────────
+
+_DATE_RE = re.compile(
+    r"\b(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2,4})\b"
+)
+_TIME_RE = re.compile(r"\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b")
+
+
+def _parse_date(text: str) -> date | None:
+    """Find a date in text and convert Thai BE years to CE."""
+    for m in _DATE_RE.finditer(text):
+        try:
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            # 2-digit year: 69 → 2569 BE
+            if y < 100:
+                y += 2500
+            # 4-digit BE year (> 2100): subtract 543
+            if y > 2100:
+                y -= 543
+            # Sanity: reject obviously wrong dates
+            if 2000 <= y <= 2100 and 1 <= mo <= 12 and 1 <= d <= 31:
+                return date(y, mo, d)
+        except (ValueError, OverflowError):
+            continue
+    return None
+
+
+def _parse_time(text: str) -> time | None:
+    """Find the first HH:MM or HH:MM:SS in text."""
+    m = _TIME_RE.search(text)
+    if not m:
+        return None
+    try:
+        h, mn, s = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+        if 0 <= h <= 23 and 0 <= mn <= 59 and 0 <= s <= 59:
+            return time(h, mn, s)
+    except ValueError:
+        pass
+    return None
+
+
+# ── Money helpers ─────────────────────────────────────────────────────────────
+
+_MONEY_RE = re.compile(r"(\d[\d,]*\.?\d*)")
+_TOTAL_LINE_RE = re.compile(
+    r"(?:total|รวม|ยอดรวม|ยอดชำระ|amount\s*due)[^\d]*(\d[\d,]*\.?\d*)",
+    re.IGNORECASE,
+)
+
+
+def _to_decimal(s: str) -> Decimal | None:
+    if not s:
+        return None
+    try:
+        return Decimal(s.replace(",", ""))
+    except InvalidOperation:
+        return None
+
+
+def _find_total(text: str) -> Decimal | None:
+    """Find the final total amount. Prefer explicit 'total' lines."""
+    m = _TOTAL_LINE_RE.search(text)
+    if m:
+        d = _to_decimal(m.group(1))
+        if d and d > 0:
+            return d
+    # Fallback: find the largest monetary value on a line that looks like a total
+    best: Decimal | None = None
+    for line in text.splitlines():
+        if re.search(r"total|รวม|ยอดรวม|ยอดชำระ", line, re.IGNORECASE):
+            for num_m in _MONEY_RE.finditer(line):
+                d = _to_decimal(num_m.group(1))
+                if d and (best is None or d > best):
+                    best = d
+    return best
+
+
+# ── TAX ID helper ─────────────────────────────────────────────────────────────
+
+_TAX_ID_RE = re.compile(
+    r"(?:tax\s*id|vat|เลขประจำตัวผู้เสียภาษี|เลขที่ผู้เสียภาษี)[^\d]*(\d[\d\-\s]{9,16}\d)",
+    re.IGNORECASE,
+)
+_DIGITS13_RE = re.compile(r"\b(\d{13})\b")
+
+
+def _find_tax_id(text: str) -> str | None:
+    m = _TAX_ID_RE.search(text)
+    if m:
+        return re.sub(r"[\s\-]", "", m.group(1))
+    # Fallback: look for any standalone 13-digit number
+    m = _DIGITS13_RE.search(text)
+    if m:
+        return m.group(1)
+    return None
+
+
+# ── Receipt number helper ─────────────────────────────────────────────────────
+
+_RECEIPT_NO_RE = re.compile(
+    r"(?:receipt\s*no\.?|invoice\s*no\.?|เลขที่|no\.)[\s:]*([A-Z0-9][A-Z0-9/\-]{3,30})",
+    re.IGNORECASE,
+)
+
+
+def _find_receipt_number(text: str) -> str | None:
+    m = _RECEIPT_NO_RE.search(text)
+    return m.group(1).strip() if m else None
+
+
+# ── Shop name helper ──────────────────────────────────────────────────────────
+
+def _find_paid_to(text: str) -> str | None:
+    """Return the first non-empty, non-address line that looks like a shop name."""
+    for line in text.splitlines():
+        line = line.strip()
+        # Skip obviously non-name lines
+        if not line:
+            continue
+        if re.match(r"^\d", line):  # starts with digit — likely address or number
+            continue
+        if re.search(r"(?:tax|vat|date|time|receipt|total|subtotal|payment|cashier|table)", line, re.IGNORECASE):
+            continue
+        if len(line) < 3 or len(line) > 80:
+            continue
+        return line
+    return None
+
+
+# ── Payment method helper ─────────────────────────────────────────────────────
+
+_PAYMENT_RE = re.compile(
+    r"\b(cash|card|credit|debit|promptpay|prompt\s*pay|qr|โอนเงิน|เงินสด|บัตรเครดิต)\b",
+    re.IGNORECASE,
+)
+
+
+def _find_payment_method(text: str) -> str | None:
+    m = _PAYMENT_RE.search(text)
+    return m.group(1).strip().title() if m else None
+
+
+# ── Item parser ───────────────────────────────────────────────────────────────
+
+_ITEM_LINE_RE = re.compile(
+    r"^(\d+)\s+(.+?)\s+(\d[\d,]*\.\d{2})$"
+)
+
+
+def _parse_items(text: str) -> list[ExtractedReceiptItem]:
+    """Extract line items from OCR text.
+
+    Handles lines like:
+      1  ซูชิกุ้ง  39.00
+      2  (A21) ซูชิแซลมอน  38.00
+    """
+    items: list[ExtractedReceiptItem] = []
+    for line in text.splitlines():
+        line = line.strip()
+        m = _ITEM_LINE_RE.match(line)
+        if not m:
+            continue
+        qty_str, name_raw, price_str = m.group(1), m.group(2).strip(), m.group(3)
+        # Skip summary lines
+        if re.search(r"total|subtotal|vat|discount|รวม|ยอด|item", name_raw, re.IGNORECASE):
+            continue
+        # Skip quantity > 20 (likely address number or code, not qty)
+        try:
+            qty_val = int(qty_str)
+            if qty_val > 20:
+                continue
+        except ValueError:
+            continue
+        # Skip if name is just digits or very short
+        if re.match(r"^\d+$", name_raw) or len(name_raw) < 2:
+            continue
+        qty = _to_decimal(qty_str) or Decimal("1")
+        price = _to_decimal(price_str) or Decimal("0")
+        items.append(
+            ExtractedReceiptItem(
+                original_name=name_raw,
+                name_en=None,
+                name_th=name_raw if _has_thai(name_raw) else None,
+                quantity=qty,
+                total_price=price,
+                discount_amount=Decimal("0"),
+            )
+        )
+    return items
+
+
+def _has_thai(text: str) -> bool:
+    return bool(re.search(r"[\u0e00-\u0e7f]", text))
+
+
+# ── Category guesser (keyword fallback) ───────────────────────────────────────
+
+_CATEGORY_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("Food & Drink", [
+        "sushi", "restaurant", "cafe", "coffee", "food", "drink", "bar",
+        "grill", "kitchen", "bakery", "noodle", "ramen", "bbq", "steak",
+        "seafood", "bistro", "shinkanzen", "the mall", "mcdonalds", "kfc",
+        "subway", "starbucks", "pizza", "burger",
+        "ร้านอาหาร", "อาหาร", "เครื่องดื่ม", "กาแฟ", "ชา", "ข้าว",
+        "ก๋วยเตี๋ยว", "ซูชิ", "ปลา", "หมู", "ไก่", "กุ้ง", "ผัก",
+    ]),
+    ("Transport", [
+        "taxi", "grab", "uber", "bus", "train", "bts", "mrt", "toll",
+        "fuel", "petrol", "parking", "airport",
+        "แท็กซี่", "รถ", "น้ำมัน", "ทางด่วน",
+    ]),
+    ("Shopping", [
+        "mall", "shop", "store", "market", "supermarket", "lotus", "bigc",
+        "tops", "central", "robinson",
+        "ห้างสรรพสินค้า", "ซูเปอร์มาร์เก็ต",
+    ]),
+    ("Healthcare", [
+        "hospital", "clinic", "pharmacy", "drug", "medicine", "dental",
+        "โรงพยาบาล", "คลินิก", "ร้านยา",
+    ]),
+    ("Accommodation", [
+        "hotel", "resort", "hostel", "inn", "motel",
+        "โรงแรม", "รีสอร์ท",
+    ]),
+    ("Entertainment", [
+        "cinema", "movie", "concert", "game", "sport", "gym", "fitness",
+        "โรงหนัง", "กีฬา", "ฟิตเนส",
+    ]),
+    ("Utilities", [
+        "electric", "water", "internet", "phone", "mobile", "dtac", "ais", "true",
+        "ไฟฟ้า", "น้ำประปา", "อินเทอร์เน็ต",
+    ]),
+    ("Education", [
+        "school", "university", "course", "tutor", "book",
+        "โรงเรียน", "มหาวิทยาลัย",
+    ]),
+]
+
+
+def _guess_category(text: str) -> str:
+    """Return the best matching category name or 'Other'."""
+    lower = text.lower()
+    for category, keywords in _CATEGORY_KEYWORDS:
+        for kw in keywords:
+            if kw in lower:
+                return category
+    return "Other"
+
+
+# ── Main OCR-text → ExtractedReceiptData ─────────────────────────────────────
+
+def _parse_ocr_to_data(ocr_text: str) -> ExtractedReceiptData:
+    """Convert raw OCR text into a validated ExtractedReceiptData object."""
+    receipt_date = _parse_date(ocr_text)
+    receipt_time = _parse_time(ocr_text)
+    total = _find_total(ocr_text)
+    tax_id = _find_tax_id(ocr_text)
+    receipt_no = _find_receipt_number(ocr_text)
+    paid_to = _find_paid_to(ocr_text)
+    payment = _find_payment_method(ocr_text)
+    items = _parse_items(ocr_text)
+    category = _guess_category(ocr_text)
+
+    # Detect language: if any Thai unicode block chars → "th"
+    language = "th" if _has_thai(ocr_text) else "en"
+
+    # total_amount is required — use 0 if we genuinely can't find it
+    if total is None:
+        total = Decimal("0")
+
+    return ExtractedReceiptData(
+        paid_to=paid_to,
+        tax_id=tax_id,
+        category_name=category,
+        receipt_number=receipt_no,
+        receipt_date=receipt_date,
+        receipt_time=receipt_time,
+        document_type=None,
+        payment_method=payment,
+        currency="THB",
+        subtotal=None,
+        tax_amount=None,
+        discount_amount=None,
+        total_amount=total,
+        language_detected=language,
+        ai_confidence=Decimal("0.75"),
+        items=items,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -125,10 +380,6 @@ Return exactly this JSON structure (no extra fields, no surrounding text):
 
 
 def _build_client() -> OpenAI:
-    """Create and return an OpenRouter client.
-
-    Raises GeminiServiceError when no API key is configured.
-    """
     api_key = settings.OPENROUTER_API_KEY
     if not api_key:
         raise GeminiServiceError(
@@ -141,29 +392,11 @@ def _build_client() -> OpenAI:
 
 
 def _clean_response_text(text: str) -> str:
-    """Strip whitespace and remove one surrounding ```json … ``` fence if present."""
     text = text.strip()
     fenced = re.match(r"^```(?:json)?\s*([\s\S]*?)```$", text, re.DOTALL)
     if fenced:
         text = fenced.group(1).strip()
     return text
-
-
-def _parse_and_validate(raw_text: str) -> ExtractedReceiptData:
-    """Parse JSON text and validate it as ExtractedReceiptData."""
-    from pydantic import ValidationError
-
-    cleaned = _clean_response_text(raw_text)
-
-    try:
-        payload = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise GeminiServiceError("AI returned invalid JSON") from exc
-
-    try:
-        return ExtractedReceiptData.model_validate(payload)
-    except ValidationError as exc:
-        raise GeminiServiceError("AI response validation failed") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -174,38 +407,31 @@ def _parse_and_validate(raw_text: str) -> ExtractedReceiptData:
 def extract_receipt_data(
     file_path: Path | str,
     mime_type: str,
-) -> ExtractedReceiptData:
-    """Extract structured receipt data using OpenRouter vision model.
+) -> tuple[ExtractedReceiptData, str]:
+    """Two-step receipt extraction.
 
-    Steps:
-    1. Validate API configuration.
-    2. Validate MIME type.
-    3. Confirm the file exists.
-    4. Read and base64-encode file bytes.
-    5. Send prompt + image to OpenRouter.
-    6. Parse and validate the response.
-    7. Return ExtractedReceiptData.
+    Step 1 — Vision call: AI reads and transcribes all text from the image.
+    Step 2 — Python parsing: Our code structures the OCR text into typed fields.
+
+    Returns (ExtractedReceiptData, ocr_text).
+    The ocr_text is also passed back so receipt_service can apply extra fallbacks.
     """
-    # 1. Build client
     client = _build_client()
 
-    # 2. Validate MIME type
     if mime_type not in SUPPORTED_MIME_TYPES:
         raise GeminiServiceError(
             f"Unsupported receipt file type: {mime_type}", status_code=415
         )
 
-    # 3. Confirm the file exists
     path = Path(file_path)
     if not path.is_file():
         raise GeminiServiceError("Receipt file not found", status_code=404)
 
-    # 4. Read and base64-encode
     file_bytes = path.read_bytes()
     b64_image = base64.b64encode(file_bytes).decode("utf-8")
     data_url = f"data:{mime_type};base64,{b64_image}"
 
-    # 5. Send to OpenRouter
+    # ── Step 1: Vision — AI reads the image ──────────────────────────────────
     try:
         response = client.chat.completions.create(
             model=settings.OPENROUTER_MODEL,
@@ -213,11 +439,8 @@ def extract_receipt_data(
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": EXTRACTION_PROMPT},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": data_url},
-                        },
+                        {"type": "text", "text": READ_PROMPT},
+                        {"type": "image_url", "image_url": {"url": data_url}},
                     ],
                 }
             ],
@@ -233,10 +456,16 @@ def extract_receipt_data(
             ) from exc
         raise GeminiServiceError("AI extraction failed") from exc
 
-    # 6. Extract text from response
-    response_text = response.choices[0].message.content if response.choices else None
-    if not response_text or not response_text.strip():
+    ocr_text = (
+        response.choices[0].message.content if response.choices else None
+    )
+    if not ocr_text or not ocr_text.strip():
         raise GeminiServiceError("AI returned an empty response")
 
-    # 7. Parse, validate, return
-    return _parse_and_validate(response_text)
+    # ── Step 2: Python parsing — structure the OCR text ──────────────────────
+    try:
+        extracted = _parse_ocr_to_data(ocr_text)
+    except Exception as exc:
+        raise GeminiServiceError("Failed to parse receipt text") from exc
+
+    return extracted, ocr_text
