@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -130,6 +131,93 @@ def delete_user_receipt(db: Session, user_id: int, receipt_id: int) -> bool:
 
 # ── Extraction ────────────────────────────────────────────────────────────────
 
+# Keywords used to guess category from merchant name or item names when the AI
+# returns null or a wrong value.
+_CATEGORY_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("Food & Drink", [
+        "sushi", "restaurant", "cafe", "coffee", "pizza", "burger", "food", "drink",
+        "bar", "grill", "kitchen", "bakery", "noodle", "ramen", "bbq", "steak",
+        "seafood", "bistro", "eatery", "thai", "chinese", "japanese", "italian",
+        "shinkanzen", "the mall", "mcdonalds", "kfc", "subway", "starbucks",
+        # Thai keywords
+        "ร้านอาหาร", "อาหาร", "เครื่องดื่ม", "กาแฟ", "ชา", "ข้าว", "ก๋วยเตี๋ยว",
+        "ซูชิ", "ปลา", "หมู", "ไก่", "กุ้ง", "ผัก",
+    ]),
+    ("Transport", [
+        "taxi", "grab", "uber", "bus", "train", "bts", "mrt", "toll", "fuel",
+        "petrol", "gas", "parking", "car", "transport", "airport",
+        "แท็กซี่", "รถ", "น้ำมัน", "ทางด่วน", "บีทีเอส", "รถไฟ",
+    ]),
+    ("Shopping", [
+        "mall", "shop", "store", "market", "supermarket", "lotus", "bigc", "tops",
+        "central", "robinson", "เซ็นทรัล", "ห้างสรรพสินค้า", "ซูเปอร์มาร์เก็ต",
+    ]),
+    ("Healthcare", [
+        "hospital", "clinic", "pharmacy", "drug", "medicine", "dental", "doctor",
+        "โรงพยาบาล", "คลินิก", "ร้านยา", "ยา",
+    ]),
+    ("Accommodation", [
+        "hotel", "resort", "hostel", "inn", "motel", "airbnb",
+        "โรงแรม", "รีสอร์ท",
+    ]),
+    ("Entertainment", [
+        "cinema", "movie", "concert", "game", "sport", "gym", "fitness",
+        "โรงหนัง", "ภาพยนตร์", "กีฬา", "ฟิตเนส",
+    ]),
+    ("Utilities", [
+        "electric", "water", "internet", "phone", "mobile", "dtac", "ais", "true",
+        "ไฟฟ้า", "น้ำประปา", "อินเทอร์เน็ต", "โทรศัพท์",
+    ]),
+    ("Education", [
+        "school", "university", "course", "tutor", "book", "library",
+        "โรงเรียน", "มหาวิทยาลัย", "หนังสือ",
+    ]),
+]
+
+_THAI_BE_DATE_RE = re.compile(
+    r"\b(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2,4})\b"
+)
+
+
+def _guess_category_from_text(text: str) -> str | None:
+    """Return a category name by keyword-matching against merchant/item text."""
+    if not text:
+        return None
+    lower = text.lower()
+    for category, keywords in _CATEGORY_KEYWORDS:
+        for kw in keywords:
+            if kw in lower:
+                return category
+    return None
+
+
+def _parse_thai_be_date(raw_date_text: str | None) -> date | None:
+    """Try to extract and convert a Thai Buddhist Era date string to a CE date.
+
+    Handles formats like:
+      - "12/06/69"  → 2026-06-12  (2-digit year: treat as BE 256x)
+      - "12/06/2569" → 2026-06-12 (4-digit BE year)
+      - "12/06/2026" → 2026-06-12 (already CE — detect by year > 2100 means BE)
+    Returns None when parsing fails.
+    """
+    if not raw_date_text:
+        return None
+    m = _THAI_BE_DATE_RE.search(raw_date_text)
+    if not m:
+        return None
+    try:
+        day, month, year_str = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        # 2-digit year: 69 → 2569 BE → 2026 CE
+        if year_str < 100:
+            year_str += 2500  # treat as BE
+        # 4-digit year > 2100 is definitely BE
+        if year_str > 2100:
+            year_str -= 543
+        return date(year_str, month, day)
+    except (ValueError, OverflowError):
+        return None
+
+
 def _find_category_by_name(db: Session, name: str | None) -> int | None:
     """Return the id of an active, non-deleted category whose name_en or name_th
     matches the given string (case-insensitive).
@@ -217,16 +305,40 @@ def extract_receipt_to_draft_expense(
         raise ReceiptServiceError("Receipt file not found", status_code=404)
 
     # 4. Call AI — GeminiServiceError is allowed to propagate unchanged.
-    extracted = extract_receipt_data(file_path, receipt.mime_type)
+    extracted, ai_raw_text = extract_receipt_data(file_path, receipt.mime_type)
 
-    # 5. Category matching — use the top-level category_name AI returned.
-    expense_category_id = _find_category_by_name(db, extracted.category_name)
+    # 4a. Fix date: if AI returned null for receipt_date, check receipt_date_raw
+    #     and also scan the full raw response text for a Thai BE date pattern.
+    receipt_date_resolved: date | None = extracted.receipt_date
+    if receipt_date_resolved is None:
+        # The AI may have put the raw date string in receipt_date_raw — it's in the
+        # raw JSON text even though it's not in our schema. Scan raw text for it.
+        receipt_date_resolved = _parse_thai_be_date(ai_raw_text)
 
-    # 6. Build paid_to: prefer explicit paid_to, fall back to merchant_name.
-    paid_to = extracted.paid_to or extracted.merchant_name
+    # 4b. Fix category: if AI returned null or generic "Other", use keyword
+    #     fallback based on paid_to and first few item names.
+    category_text = extracted.category_name
+    if not category_text or category_text.strip().lower() == "other":
+        search_corpus = " ".join(filter(None, [
+            extracted.paid_to,
+        ] + [
+            (item.original_name or item.name_th or item.name_en or "")
+            for item in extracted.items[:5]
+        ]))
+        # Also scan the full raw response for merchant/restaurant clues
+        search_corpus += " " + ai_raw_text[:500]
+        guessed = _guess_category_from_text(search_corpus)
+        if guessed:
+            category_text = guessed
 
-    # 7. Determine receipt_date — use the date from the receipt, not today.
-    receipt_date = extracted.receipt_date or date.today()
+    # 5. Category matching — use resolved category text.
+    expense_category_id = _find_category_by_name(db, category_text)
+
+    # 6. Build paid_to: use explicit paid_to only.
+    paid_to = extracted.paid_to
+
+    # 7. Determine receipt_date — use extracted or parsed date, not today.
+    receipt_date = receipt_date_resolved or date.today()
 
     try:
         # 8. Create the Expense.
@@ -293,22 +405,21 @@ def extract_receipt_to_draft_expense(
             db.refresh(item)
 
         # 13. Build the response while the session is still open.
-        # Also look up the category name to send back to the frontend.
-        category_name: str | None = None
+        # category_name: use resolved DB name, else the text we matched against
+        response_category_name: str | None = None
         if expense.category_id:
             cat = db.query(Category).filter(Category.id == expense.category_id).first()
             if cat:
-                category_name = cat.name_en
-        # Fallback: if no DB match, still send the AI-guessed name so the form pre-fills
-        if not category_name and extracted.category_name:
-            category_name = extracted.category_name
+                response_category_name = cat.name_en or cat.name_th
+        if not response_category_name:
+            response_category_name = category_text  # AI-guessed, even if no DB match
 
         item_responses = [ExpenseItemResponse.model_validate(item) for item in created_items]
         return ExpenseResponse(
             id=expense.id,
             user_id=expense.user_id,
             category_id=expense.category_id,
-            category_name=category_name,
+            category_name=response_category_name,
             paid_to=expense.paid_to,
             tax_id=expense.tax_id,
             receipt_number=expense.receipt_number,
