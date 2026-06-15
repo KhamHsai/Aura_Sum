@@ -252,13 +252,15 @@
     </div>
 
     <!-- ── Actions ────────────────────────────────────────────────── -->
-    <div class="form-actions">
-      <button type="button" class="btn btn-secondary" style="width:auto;" @click="emit('cancel')">
+    <div class="form-actions" style="margin-top: 2rem; gap: 1.25rem;">
+      <button type="button" class="btn btn-secondary" style="width:auto; padding: 0.85rem 1.5rem;" @click="emit('cancel')">
         {{ t('cancel') }}
       </button>
-      <button type="submit" class="btn btn-primary" style="width:auto;" :disabled="isSubmitting">
+      <div style="flex: 1;"></div>
+      <button type="submit" class="btn btn-secondary" style="width:auto; padding: 0.85rem 1.5rem; background: rgba(93, 63, 211, 0.05);" :disabled="isSubmitting">
         {{ isSubmitting ? t('saving') : submitLabel }}
       </button>
+      <slot name="extra-actions"></slot>
     </div>
 
   </form>

@@ -38,3 +38,18 @@ export function showDeleteConfirmation(options: {
     focusCancel: true,
   })
 }
+
+export function showLoadingAlert(title: string, text?: string) {
+  return Swal.fire({
+    title,
+    text,
+    allowOutsideClick: false,
+    didOpen: () => {
+      Swal.showLoading()
+    }
+  })
+}
+
+export function closeAlert() {
+  Swal.close()
+}

@@ -28,17 +28,17 @@
     <template v-else-if="expense">
       <!-- Header card -->
       <div class="detail-card">
-        <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1.5rem; margin-bottom:1.5rem;">
           <div>
-            <h1 style="font-size:1.5rem; color:#1a1a2e; margin-bottom:0.25rem;">
+            <h1 style="font-size:1.8rem; color:var(--color-text-main); margin-bottom:0.25rem; font-family:var(--font-brand);">
               {{ expense.paid_to ?? t('not_available') }}
             </h1>
-            <div style="color:#555; font-size:0.95rem;">
+            <div style="color:var(--color-text-muted); font-size:0.95rem; font-weight:500;">
               {{ formatDate(expense.receipt_date) }}
             </div>
           </div>
-          <div style="text-align:right;">
-            <div style="font-size:1.5rem; font-weight:700; color:#4a6cf7;">
+          <div style="text-align:right; display:flex; flex-direction:column; align-items:flex-end; gap:0.35rem;">
+            <div style="font-size:1.8rem; font-weight:800; color:var(--color-brand-primary); font-family:var(--font-brand);">
               {{ formatMoney(expense.total_amount, expense.currency) }}
             </div>
             <span
@@ -47,14 +47,7 @@
             >
               {{ expense.is_confirmed ? t('confirmed') : t('draft') }}
             </span>
-            <div class="detail-actions">
-              <RouterLink
-                :to="{ name: 'expense-edit', params: { id: expense.id } }"
-                class="btn btn-secondary"
-                style="text-decoration:none;"
-              >
-                {{ t('edit_expense') }}
-              </RouterLink>
+            <div class="detail-actions" style="margin-top:0.75rem;">
               <button
                 v-if="!expense.is_confirmed"
                 class="btn btn-confirm"
@@ -62,13 +55,6 @@
                 @click="handleConfirm"
               >
                 {{ isConfirming ? t('confirming') : t('confirm_expense') }}
-              </button>
-              <button
-                class="btn btn-danger"
-                :disabled="isDeleting"
-                @click="handleDelete"
-              >
-                {{ isDeleting ? t('saving') : t('delete_expense') }}
               </button>
             </div>
           </div>
@@ -164,91 +150,6 @@
         </div>
       </div>
 
-      <!-- Translation card -->
-      <div class="detail-card translation-section">
-        <h2>{{ t('translate_expense') }}</h2>
-
-        <p class="translation-quota-notice">{{ t('ai_translation_quota_notice') }}</p>
-
-        <!-- Language selector and translate button -->
-        <div class="translation-controls">
-          <label for="target-language-select" class="translation-label">
-            {{ t('target_language') }}
-          </label>
-          <select
-            id="target-language-select"
-            v-model="targetLanguage"
-            class="translation-select"
-            :disabled="isTranslating"
-            aria-label="target language"
-          >
-            <option value="en">{{ t('lang_en') }}</option>
-            <option value="th">{{ t('lang_th') }}</option>
-          </select>
-
-          <button
-            class="btn btn-primary"
-            :disabled="isTranslating"
-            @click="handleTranslate"
-          >
-            {{ isTranslating ? t('translating') : t('translate') }}
-          </button>
-        </div>
-
-        <!-- Loading state -->
-        <div v-if="isTranslating" class="translation-loading" aria-live="polite">
-          <span class="translation-spinner" aria-hidden="true">⏳</span>
-          {{ t('translating') }} {{ t('translation_may_take_a_moment') }}
-        </div>
-
-        <!-- Translation error -->
-        <div v-if="translationError && !isTranslating" class="alert alert-error translation-error">
-          {{ translationError }}
-        </div>
-
-        <!-- Translation result -->
-        <div v-if="translationResult && !isTranslating" class="translation-result">
-
-          <!-- Notes comparison (only if expense has notes) -->
-          <div v-if="expense.notes" class="translation-comparison">
-            <div class="translation-original">
-              <label>{{ t('original_notes') }}</label>
-              <span>{{ expense.notes }}</span>
-            </div>
-            <div class="translation-translated">
-              <label>{{ t('translated_notes') }}</label>
-              <span>{{ translationResult.translated_notes ?? t('no_translation_available') }}</span>
-            </div>
-          </div>
-
-          <!-- Translated items (only if there are items with translations) -->
-          <div v-if="translationResult.items.length > 0" class="translation-items">
-            <h3 style="font-size:1rem; color:#1a1a2e; margin-bottom:0.75rem;">
-              {{ t('expense_items') }}
-            </h3>
-            <div
-              v-for="tItem in translationResult.items"
-              :key="tItem.item_id"
-              class="translation-item-row"
-            >
-              <div class="translation-original">
-                <label>{{ t('original_name') }}</label>
-                <span>{{ tItem.original_name ?? t('no_translation_available') }}</span>
-              </div>
-              <div class="translation-translated">
-                <label>{{ t('translated_name') }}</label>
-                <span>{{ tItem.translated_name ?? t('no_translation_available') }}</span>
-              </div>
-              <div class="translation-name-pair">
-                <span class="translation-name-tag">EN</span>
-                <span>{{ tItem.name_en ?? t('no_translation_available') }}</span>
-                <span class="translation-name-tag">TH</span>
-                <span>{{ tItem.name_th ?? t('no_translation_available') }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
     </template>
   </AppLayout>
 </template>

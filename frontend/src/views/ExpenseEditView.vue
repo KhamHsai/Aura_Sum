@@ -35,20 +35,20 @@
         :backend-error="backendError"
         @submit="handleSubmit"
         @cancel="router.push({ name: 'expense-detail', params: { id: expenseId } })"
-      />
-
-      <!-- Confirm Expense button — only visible for unconfirmed draft expenses -->
-      <div v-if="loadedExpense && !loadedExpense.is_confirmed" class="form-actions" style="margin-top:0;">
-        <button
-          type="button"
-          class="btn btn-confirm"
-          style="width:auto;"
-          :disabled="isSubmitting || isConfirming"
-          @click="handleConfirmClick"
-        >
-          {{ isConfirming ? t('confirming') : t('confirm_expense') }}
-        </button>
-      </div>
+      >
+        <template #extra-actions>
+          <button
+            v-if="loadedExpense && !loadedExpense.is_confirmed"
+            type="button"
+            class="btn btn-primary"
+            style="width:auto; padding: 0.85rem 1.5rem;"
+            :disabled="isSubmitting || isConfirming"
+            @click="handleConfirmClick"
+          >
+            {{ isConfirming ? t('confirming') : t('confirm_expense') }}
+          </button>
+        </template>
+      </ExpenseForm>
     </template>
   </AppLayout>
 </template>

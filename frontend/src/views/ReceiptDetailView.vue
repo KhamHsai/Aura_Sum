@@ -28,10 +28,10 @@
     <template v-else-if="receipt">
       <div class="detail-card">
         <!-- Header -->
-        <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1rem; margin-bottom:1.25rem;">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1.5rem; margin-bottom:1.5rem;">
           <div>
-            <h1 style="font-size:1.4rem; color:#1a1a2e; margin-bottom:0.25rem;">{{ t('receipt_details') }}</h1>
-            <div style="color:#555; font-size:0.95rem; word-break:break-all;">{{ receipt.original_filename }}</div>
+            <h1 style="font-size:1.8rem; color:var(--color-text-main); margin-bottom:0.25rem; font-family:var(--font-brand);">{{ t('receipt_details') }}</h1>
+            <div style="color:var(--color-text-muted); font-size:0.95rem; font-weight:500; word-break:break-all;">{{ receipt.original_filename }}</div>
           </div>
           <div class="detail-actions">
             <!-- Extract button when not yet linked to an expense -->

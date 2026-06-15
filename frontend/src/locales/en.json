@@ -106,6 +106,8 @@
 
   "create_expense": "Create Expense",
   "edit_expense": "Edit Expense",
+  "edit": "Edit",
+  "delete": "Delete",
   "save_expense": "Save Expense",
   "update_expense": "Update Expense",
   "expense_created": "Expense created.",
