@@ -10,6 +10,9 @@ python-multipart
 pillow
 pandas
 openpyxl
-google-genai
+openai
 pytest
 httpx
+email-validator
+pwdlib[argon2]
+PyJWT
