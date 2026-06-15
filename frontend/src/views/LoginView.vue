@@ -1,7 +1,32 @@
 <template>
   <div class="auth-page">
+    <!-- Language switcher at top right -->
+    <div class="auth-lang-switcher">
+      <button 
+        type="button" 
+        class="lang-switch-btn" 
+        :class="{ active: locale === 'en' }" 
+        @click="changeLang('en')"
+      >
+        English
+      </button>
+      <span style="color: rgba(98, 93, 136, 0.3); font-size: 0.85rem;">/</span>
+      <button 
+        type="button" 
+        class="lang-switch-btn" 
+        :class="{ active: locale === 'th' }" 
+        @click="changeLang('th')"
+      >
+        ไทย
+      </button>
+    </div>
+
     <div class="auth-card">
-      <h1>{{ t('login') }}</h1>
+      <!-- Aura branding header -->
+      <div class="auth-header-logo">
+        <div class="app-logo-symbol">A</div>
+        <h2>Smart Receipt</h2>
+      </div>
 
       <!-- Backend error -->
       <div v-if="auth.error" class="alert alert-error" role="alert">
@@ -24,7 +49,7 @@
         </div>
 
         <!-- Password -->
-        <div class="form-group">
+        <div class="form-group" style="margin-bottom: 0.5rem;">
           <label for="password">{{ t('password') }}</label>
           <input
             id="password"
@@ -37,10 +62,12 @@
           <p v-if="errors.password" class="field-error">{{ errors.password }}</p>
         </div>
 
-        <button type="submit" class="btn btn-primary" :disabled="auth.isLoading">
+
+        <button type="submit" class="btn btn-primary" style="width:100%;" :disabled="auth.isLoading">
           {{ auth.isLoading ? t('loading') : t('login') }}
         </button>
       </form>
+
 
       <p class="auth-link">
         {{ t('no_account') }}
@@ -56,9 +83,14 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '../stores/auth'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const auth = useAuthStore()
 const router = useRouter()
+
+function changeLang(lang: 'en' | 'th'): void {
+  locale.value = lang
+  localStorage.setItem('locale', lang)
+}
 
 const form = reactive({ email: '', password: '' })
 const errors = ref<{ email?: string; password?: string }>({})

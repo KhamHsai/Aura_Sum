@@ -28,48 +28,18 @@
     <template v-else-if="expense">
       <!-- Header card -->
       <div class="detail-card">
-        <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1.5rem; margin-bottom:1.5rem;">
           <div>
-            <h1 style="font-size:1.5rem; color:#1a1a2e; margin-bottom:0.25rem;">
+            <h1 style="font-size:1.8rem; color:var(--color-text-main); margin-bottom:0.25rem; font-family:var(--font-brand);">
               {{ expense.paid_to ?? t('not_available') }}
             </h1>
-            <div style="color:#555; font-size:0.95rem;">
+            <div style="color:var(--color-text-muted); font-size:0.95rem; font-weight:500;">
               {{ formatDate(expense.receipt_date) }}
             </div>
           </div>
-          <div style="text-align:right;">
-            <div style="font-size:1.5rem; font-weight:700; color:#4a6cf7;">
+          <div style="text-align:right; display:flex; flex-direction:column; align-items:flex-end; gap:0.35rem;">
+            <div style="font-size:1.8rem; font-weight:800; color:var(--color-brand-primary); font-family:var(--font-brand);">
               {{ formatMoney(expense.total_amount, expense.currency) }}
-            </div>
-            <span
-              class="badge"
-              :class="expense.is_confirmed ? 'badge-confirmed' : 'badge-draft'"
-            >
-              {{ expense.is_confirmed ? t('confirmed') : t('draft') }}
-            </span>
-            <div class="detail-actions">
-              <RouterLink
-                :to="{ name: 'expense-edit', params: { id: expense.id } }"
-                class="btn btn-secondary"
-                style="text-decoration:none;"
-              >
-                {{ t('edit_expense') }}
-              </RouterLink>
-              <button
-                v-if="!expense.is_confirmed"
-                class="btn btn-confirm"
-                :disabled="isConfirming"
-                @click="handleConfirm"
-              >
-                {{ isConfirming ? t('confirming') : t('confirm_expense') }}
-              </button>
-              <button
-                class="btn btn-danger"
-                :disabled="isDeleting"
-                @click="handleDelete"
-              >
-                {{ isDeleting ? t('saving') : t('delete_expense') }}
-              </button>
             </div>
           </div>
         </div>
@@ -164,91 +134,6 @@
         </div>
       </div>
 
-      <!-- Translation card -->
-      <div class="detail-card translation-section">
-        <h2>{{ t('translate_expense') }}</h2>
-
-        <p class="translation-quota-notice">{{ t('ai_translation_quota_notice') }}</p>
-
-        <!-- Language selector and translate button -->
-        <div class="translation-controls">
-          <label for="target-language-select" class="translation-label">
-            {{ t('target_language') }}
-          </label>
-          <select
-            id="target-language-select"
-            v-model="targetLanguage"
-            class="translation-select"
-            :disabled="isTranslating"
-            aria-label="target language"
-          >
-            <option value="en">{{ t('lang_en') }}</option>
-            <option value="th">{{ t('lang_th') }}</option>
-          </select>
-
-          <button
-            class="btn btn-primary"
-            :disabled="isTranslating"
-            @click="handleTranslate"
-          >
-            {{ isTranslating ? t('translating') : t('translate') }}
-          </button>
-        </div>
-
-        <!-- Loading state -->
-        <div v-if="isTranslating" class="translation-loading" aria-live="polite">
-          <span class="translation-spinner" aria-hidden="true">⏳</span>
-          {{ t('translating') }} {{ t('translation_may_take_a_moment') }}
-        </div>
-
-        <!-- Translation error -->
-        <div v-if="translationError && !isTranslating" class="alert alert-error translation-error">
-          {{ translationError }}
-        </div>
-
-        <!-- Translation result -->
-        <div v-if="translationResult && !isTranslating" class="translation-result">
-
-          <!-- Notes comparison (only if expense has notes) -->
-          <div v-if="expense.notes" class="translation-comparison">
-            <div class="translation-original">
-              <label>{{ t('original_notes') }}</label>
-              <span>{{ expense.notes }}</span>
-            </div>
-            <div class="translation-translated">
-              <label>{{ t('translated_notes') }}</label>
-              <span>{{ translationResult.translated_notes ?? t('no_translation_available') }}</span>
-            </div>
-          </div>
-
-          <!-- Translated items (only if there are items with translations) -->
-          <div v-if="translationResult.items.length > 0" class="translation-items">
-            <h3 style="font-size:1rem; color:#1a1a2e; margin-bottom:0.75rem;">
-              {{ t('expense_items') }}
-            </h3>
-            <div
-              v-for="tItem in translationResult.items"
-              :key="tItem.item_id"
-              class="translation-item-row"
-            >
-              <div class="translation-original">
-                <label>{{ t('original_name') }}</label>
-                <span>{{ tItem.original_name ?? t('no_translation_available') }}</span>
-              </div>
-              <div class="translation-translated">
-                <label>{{ t('translated_name') }}</label>
-                <span>{{ tItem.translated_name ?? t('no_translation_available') }}</span>
-              </div>
-              <div class="translation-name-pair">
-                <span class="translation-name-tag">EN</span>
-                <span>{{ tItem.name_en ?? t('no_translation_available') }}</span>
-                <span class="translation-name-tag">TH</span>
-                <span>{{ tItem.name_th ?? t('no_translation_available') }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
     </template>
   </AppLayout>
 </template>
@@ -258,7 +143,7 @@ import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '../layouts/AppLayout.vue'
-import { getExpenseById, deleteExpense, confirmExpense, translateExpense } from '../api/expenseApi'
+import { getExpenseById, deleteExpense, translateExpense } from '../api/expenseApi'
 import { showDeleteConfirmation, showSuccessAlert, showErrorAlert } from '../utils/alerts'
 import { formatMoney, formatDate, formatDateTime } from '../utils/formatters'
 import type { Expense, ExpenseItem } from '../types/expense'
@@ -271,7 +156,6 @@ const router = useRouter()
 const expense = ref<Expense | null>(null)
 const isLoading = ref(false)
 const isDeleting = ref(false)
-const isConfirming = ref(false)
 const error = ref<string | null>(null)
 const notFound = ref(false)
 
@@ -341,43 +225,6 @@ async function handleTranslate(): Promise<void> {
     await showErrorAlert(t('unable_to_translate_expense'), translationError.value)
   } finally {
     isTranslating.value = false
-  }
-}
-
-async function handleConfirm(): Promise<void> {
-  if (!expense.value || isConfirming.value) return
-
-  const result = await showDeleteConfirmation({
-    title: t('confirm_expense_title'),
-    text: t('confirm_expense_message'),
-    confirmButtonText: t('confirm_expense'),
-    cancelButtonText: t('cancel'),
-  })
-
-  if (!result.isConfirmed) return
-
-  isConfirming.value = true
-
-  try {
-    const updated = await confirmExpense(expense.value.id)
-    expense.value = updated
-    await showSuccessAlert(t('expense_confirmed'), t('expense_confirmed_message'))
-  } catch (err: unknown) {
-    const status = (err as { response?: { status?: number; data?: { detail?: string } } })?.response?.status
-    const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-    if (status === 409) {
-      const msg = typeof detail === 'string' ? detail : t('already_confirmed')
-      await showErrorAlert(t('unable_to_confirm_expense'), msg)
-    } else if (status === 422) {
-      const msg = typeof detail === 'string' ? detail : t('incomplete_expense')
-      await showErrorAlert(t('unable_to_confirm_expense'), msg)
-    } else if (status === 404) {
-      await showErrorAlert(t('expense_not_found'))
-    } else {
-      await showErrorAlert(t('unable_to_confirm_expense'), t('please_review_and_try_again'))
-    }
-  } finally {
-    isConfirming.value = false
   }
 }
 

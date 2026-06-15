@@ -75,17 +75,15 @@ def _clean_json(text: str) -> str:
 def translate_expense_text(
     source_language: str,
     target_language: str,
-    title: str | None,
     notes: str | None,
     items: list[dict],
 ) -> GeminiTranslationResult:
-    """Call Gemini to translate expense title, notes, and item names.
+    """Call AI to translate expense notes and item names.
 
     Parameters
     ----------
     source_language : "en" or "th"
     target_language : "en" or "th"
-    title           : expense title to translate, or None
     notes           : expense notes to translate, or None
     items           : list of dicts with keys item_id and source_name
 
@@ -95,7 +93,7 @@ def translate_expense_text(
 
     Raises
     ------
-    TranslationServiceError on any Gemini or validation failure.
+    TranslationServiceError on any AI or validation failure.
     """
     client = _build_translation_client()
 
@@ -123,14 +121,12 @@ Rules:
 
 Input:
 {{
-  "title": {json.dumps(title)},
   "notes": {json.dumps(notes)},
   "items": {json.dumps(prompt_items)}
 }}
 
 Return exactly this JSON structure:
 {{
-  "translated_title": null,
   "translated_notes": null,
   "items": [
     {{
@@ -340,24 +336,13 @@ def translate_expense(
     )
 
     # 5a. Check existing title/notes translations
-    translated_title: str | None = None
     translated_notes: str | None = None
-    needs_title = False
     needs_notes = False
 
     if source_language == target_language:
         # Nothing to translate — return existing text as-is
-        translated_title = expense.title
         translated_notes = expense.notes
     else:
-        if expense.title:
-            saved = _find_saved_translation(
-                db, expense.title, source_language, target_language
-            )
-            if saved is not None:
-                translated_title = saved
-            else:
-                needs_title = True
         if expense.notes:
             saved = _find_saved_translation(
                 db, expense.notes, source_language, target_language
@@ -409,8 +394,7 @@ def translate_expense(
 
     # Determine whether everything was already available
     gemini_needed = (
-        needs_title
-        or needs_notes
+        needs_notes
         or bool(items_needing_translation)
     ) and source_language != target_language
 
@@ -422,13 +406,10 @@ def translate_expense(
         gemini_result = translate_expense_text(
             source_language=source_language,
             target_language=target_language,
-            title=expense.title if needs_title else None,
             notes=expense.notes if needs_notes else None,
             items=items_needing_translation,
         )
-        # Fill in translated title / notes from Gemini
-        if needs_title:
-            translated_title = gemini_result.translated_title
+        # Fill in translated notes from Gemini
         if needs_notes:
             translated_notes = gemini_result.translated_notes
 
@@ -446,16 +427,6 @@ def translate_expense(
     # 7. Save results in one transaction
     try:
         if gemini_needed and gemini_result is not None:
-            # Save title translation
-            if needs_title and expense.title and translated_title is not None:
-                _save_translation(
-                    db,
-                    expense.title,
-                    source_language,
-                    target_language,
-                    translated_title,
-                )
-
             # Save notes translation
             if needs_notes and expense.notes and translated_notes is not None:
                 _save_translation(

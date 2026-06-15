@@ -106,6 +106,8 @@
 
   "create_expense": "สร้างรายจ่าย",
   "edit_expense": "แก้ไขรายจ่าย",
+  "edit": "แก้ไข",
+  "delete": "ลบ",
   "save_expense": "บันทึกรายจ่าย",
   "update_expense": "อัปเดตรายจ่าย",
   "expense_created": "สร้างรายจ่ายแล้ว",

@@ -31,6 +31,8 @@ vi.mock('../utils/alerts', () => ({
   showSuccessAlert: vi.fn().mockResolvedValue(undefined),
   showErrorAlert: vi.fn().mockResolvedValue(undefined),
   showDeleteConfirmation: vi.fn().mockResolvedValue({ isConfirmed: false }),
+  showLoadingAlert: vi.fn().mockResolvedValue(undefined),
+  closeAlert: vi.fn(),
 }))
 
 const mockPush = vi.fn()

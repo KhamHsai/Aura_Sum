@@ -67,6 +67,7 @@ def create_expense(db: Session, user_id: int, data: ExpenseCreate) -> ExpenseRes
             total_amount=data.total_amount,
             notes=data.notes,
             input_method="manual",
+            is_confirmed=True,
         )
 
         # 4. Flush to get expense.id without committing yet
@@ -558,10 +559,10 @@ def export_user_expenses_to_excel(db: Session, user_id: int) -> BytesIO:
     ws_exp = wb.create_sheet("Expenses")
 
     expense_headers = [
-        "Expense ID", "Receipt Date", "Receipt Time", "Title", "Merchant Name",
-        "Category", "Receipt Number", "Document Type", "Payment Method", "Currency",
+        "Expense ID", "Receipt Date", "Paid To",
+        "Category", "Receipt Number", "Payment Method", "Currency",
         "Subtotal", "Tax Amount", "Discount Amount", "Total Amount",
-        "Input Method", "Language", "Confirmed", "Notes", "Created At", "Updated At",
+        "Confirmed", "Notes", "Created At", "Updated At",
     ]
     ws_exp.append(expense_headers)
 
@@ -569,20 +570,15 @@ def export_user_expenses_to_excel(db: Session, user_id: int) -> BytesIO:
         ws_exp.append([
             exp.id,
             exp.receipt_date,            # date → formatted below
-            exp.receipt_time,            # time → formatted below
-            exp.title,
-            exp.merchant_name,
+            exp.paid_to,
             _category_name(exp.category),
             exp.receipt_number,
-            exp.document_type,
             exp.payment_method,
             exp.currency,
             float(exp.subtotal) if exp.subtotal is not None else None,
             float(exp.tax_amount) if exp.tax_amount is not None else None,
             float(exp.discount_amount) if exp.discount_amount is not None else None,
             float(exp.total_amount) if exp.total_amount is not None else None,
-            exp.input_method,
-            exp.language_detected,
             "Yes" if exp.is_confirmed else "No",
             exp.notes,
             exp.created_at,
@@ -590,10 +586,9 @@ def export_user_expenses_to_excel(db: Session, user_id: int) -> BytesIO:
         ])
 
     # Apply number/date formats to money and date columns
-    MONEY_COLS_EXP = [11, 12, 13, 14]   # Subtotal … Total Amount (1-indexed)
+    MONEY_COLS_EXP = [8, 9, 10, 11]     # Subtotal … Total Amount (1-indexed)
     DATE_COL_EXP = 2                     # Receipt Date
-    TIME_COL_EXP = 3                     # Receipt Time
-    DT_COLS_EXP = [19, 20]              # Created At, Updated At
+    DT_COLS_EXP = [14, 15]              # Created At, Updated At
 
     for row in ws_exp.iter_rows(min_row=2):
         for col_idx in MONEY_COLS_EXP:
@@ -603,9 +598,6 @@ def export_user_expenses_to_excel(db: Session, user_id: int) -> BytesIO:
         date_cell = row[DATE_COL_EXP - 1]
         if date_cell.value is not None:
             date_cell.number_format = "yyyy-mm-dd"
-        time_cell = row[TIME_COL_EXP - 1]
-        if time_cell.value is not None:
-            time_cell.number_format = "hh:mm:ss"
         for col_idx in DT_COLS_EXP:
             cell = row[col_idx - 1]
             if cell.value is not None:
@@ -613,10 +605,10 @@ def export_user_expenses_to_excel(db: Session, user_id: int) -> BytesIO:
 
     _apply_header_style(ws_exp)
     _set_column_widths(ws_exp, [
-        10, 12, 10, 28, 22,   # ID … Merchant Name
-        16, 14, 16, 16, 8,    # Category … Currency
+        10, 12, 22,           # ID, Receipt Date, Paid To
+        16, 14, 16, 8,        # Category, Receipt Number, Payment Method, Currency
         12, 12, 14, 14,       # Subtotal … Total Amount
-        14, 10, 10, 30,       # Input Method … Notes
+        10, 30,               # Confirmed, Notes
         18, 18,               # Created At, Updated At
     ])
 
@@ -711,23 +703,17 @@ def confirm_user_expense(
     if expense is None:
         raise ExpenseServiceError("Expense not found", status_code=404)
 
-    # 2. Must be an AI-extracted expense
-    if expense.input_method != "ai":
-        raise ExpenseServiceError(
-            "Only AI-extracted expenses can be confirmed", status_code=409
-        )
-
-    # 3. Already confirmed
+    # 2. Already confirmed
     if expense.is_confirmed:
         raise ExpenseServiceError("Expense is already confirmed", status_code=409)
 
-    # 4. category_id must be set before confirming
+    # 3. category_id must be set before confirming
     if expense.category_id is None:
         raise ExpenseServiceError(
             "Please select a category before confirming", status_code=422
         )
 
-    # 5. Category must exist, be active, and not be soft-deleted
+    # 4. Category must exist, be active, and not be soft-deleted
     category = (
         db.query(Category)
         .filter(
@@ -742,7 +728,7 @@ def confirm_user_expense(
             "A valid expense category is required before confirmation", status_code=422
         )
 
-    # 6. total_amount must be set and zero or greater
+    # 5. total_amount must be set and zero or greater
     if expense.total_amount is None:
         raise ExpenseServiceError(
             "Expense total amount is required before confirmation", status_code=422
@@ -753,6 +739,7 @@ def confirm_user_expense(
         )
 
     # All checks passed — confirm in one transaction
+
     try:
         expense.is_confirmed = True
         db.commit()

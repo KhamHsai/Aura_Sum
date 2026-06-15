@@ -19,7 +19,6 @@ const fakeTranslationResponse = {
   expense_id: 5,
   source_language: 'th' as const,
   target_language: 'en' as const,
-  translated_title: 'Lunch Expense',
   translated_notes: 'Paid in full',
   items: [
     {
@@ -72,7 +71,7 @@ describe('translateExpense', () => {
     mockPost.mockResolvedValue({ data: fakeTranslationResponse })
     const result = await translateExpense(5, 'en')
     expect(result.expense_id).toBe(5)
-    expect(result.translated_title).toBe('Lunch Expense')
+    expect(result.translated_notes).toBe('Paid in full')
     expect(result.items).toHaveLength(1)
     expect(result.items[0].item_id).toBe(10)
   })

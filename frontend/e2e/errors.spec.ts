@@ -15,9 +15,9 @@ import {
   testEmail,
   testUsername,
   getFirstCategoryId,
-  loginApi,
   createExpenseApi,
 } from './helpers/testData'
+import { loginApi } from './helpers/auth'
 
 const suffix = uniqueSuffix()
 const email = testEmail(suffix)
