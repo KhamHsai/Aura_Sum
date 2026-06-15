@@ -1,6 +1,8 @@
-# Test suite for backend health endpoint
-import pytest
+from fastapi.testclient import TestClient
+from app.main import app
 
 def test_health():
-    # Placeholder for health check test
-    pass
+    client = TestClient(app)
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
