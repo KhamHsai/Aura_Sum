@@ -42,28 +42,21 @@ def _get_valid_category(db: Session, category_id: int, error_message: str) -> Ca
 
 
 def create_expense(db: Session, user_id: int, data: ExpenseCreate) -> ExpenseResponse:
-    """
-    Create one expense and its optional items for the authenticated user.
+    """Create one expense and its optional items for the authenticated user."""
+    # Validate category only if provided
+    if data.category_id is not None:
+        _get_valid_category(db, data.category_id, "Category not found")
 
-    Validates categories, writes everything in one transaction,
-    and rolls back fully if anything fails.
-    Returns an ExpenseResponse built while the session is still open.
-    """
-    # 1. Validate the main expense category
-    _get_valid_category(db, data.category_id, "Category not found")
-
-    # 2. Validate each item category before touching the database
     for item_data in data.items:
         if item_data.category_id is not None:
             _get_valid_category(db, item_data.category_id, "Item category not found")
 
     try:
-        # 3. Create the Expense — user_id always comes from the auth layer
         expense = Expense(
             user_id=user_id,
             category_id=data.category_id,
-            title=data.title,
-            merchant_name=data.merchant_name,
+            paid_to=data.paid_to,
+            tax_id=data.tax_id,
             receipt_number=data.receipt_number,
             receipt_date=data.receipt_date,
             payment_method=data.payment_method,
@@ -73,7 +66,7 @@ def create_expense(db: Session, user_id: int, data: ExpenseCreate) -> ExpenseRes
             discount_amount=data.discount_amount,
             total_amount=data.total_amount,
             notes=data.notes,
-            input_method="manual",  # only supported value for user-created expenses
+            input_method="manual",
         )
 
         # 4. Flush to get expense.id without committing yet
@@ -110,15 +103,23 @@ def create_expense(db: Session, user_id: int, data: ExpenseCreate) -> ExpenseRes
 
         # 8. Build the Pydantic response from the in-memory objects while the
         #    session is still open — avoids lazy-load issues after session closes.
+        category_name: str | None = None
+        if expense.category_id:
+            db.refresh(expense)  # ensure category relationship is loaded
+            if expense.category:
+                category_name = expense.category.name_en or expense.category.name_th
+
         item_responses = [ExpenseItemResponse.model_validate(item) for item in created_items]
         response = ExpenseResponse(
             id=expense.id,
             user_id=expense.user_id,
             category_id=expense.category_id,
-            title=expense.title,
-            merchant_name=expense.merchant_name,
+            category_name=category_name,
+            paid_to=expense.paid_to,
+            tax_id=expense.tax_id,
             receipt_number=expense.receipt_number,
             receipt_date=expense.receipt_date,
+            receipt_time=expense.receipt_time,
             payment_method=expense.payment_method,
             currency=expense.currency,
             subtotal=expense.subtotal,
@@ -158,15 +159,22 @@ def _get_non_deleted_items(db: Session, expense_id: int) -> list[ExpenseItem]:
 
 def _build_expense_response(expense: Expense, items: list[ExpenseItem]) -> ExpenseResponse:
     """Build an ExpenseResponse from ORM objects while the session is open."""
+    # Resolve human-readable category name
+    category_name: str | None = None
+    if expense.category and (expense.category.name_en or expense.category.name_th):
+        category_name = expense.category.name_en or expense.category.name_th
+
     item_responses = [ExpenseItemResponse.model_validate(item) for item in items]
     return ExpenseResponse(
         id=expense.id,
         user_id=expense.user_id,
         category_id=expense.category_id,
-        title=expense.title,
-        merchant_name=expense.merchant_name,
+        category_name=category_name,
+        paid_to=expense.paid_to,
+        tax_id=expense.tax_id,
         receipt_number=expense.receipt_number,
         receipt_date=expense.receipt_date,
+        receipt_time=expense.receipt_time,
         payment_method=expense.payment_method,
         currency=expense.currency,
         subtotal=expense.subtotal,
@@ -279,7 +287,7 @@ def update_user_expense(
 
     # Simple-field editable names that the client is allowed to change
     _EDITABLE = {
-        "category_id", "title", "merchant_name", "receipt_number", "receipt_date",
+        "category_id", "paid_to", "tax_id", "receipt_number", "receipt_date",
         "payment_method", "currency", "subtotal", "tax_amount", "discount_amount",
         "total_amount", "notes",
     }
@@ -713,10 +721,10 @@ def confirm_user_expense(
     if expense.is_confirmed:
         raise ExpenseServiceError("Expense is already confirmed", status_code=409)
 
-    # 4. category_id must be set
+    # 4. category_id must be set before confirming
     if expense.category_id is None:
         raise ExpenseServiceError(
-            "Expense category is required before confirmation", status_code=422
+            "Please select a category before confirming", status_code=422
         )
 
     # 5. Category must exist, be active, and not be soft-deleted
@@ -734,13 +742,7 @@ def confirm_user_expense(
             "A valid expense category is required before confirmation", status_code=422
         )
 
-    # 6. Title must be present and not blank
-    if not expense.title or not expense.title.strip():
-        raise ExpenseServiceError(
-            "Expense title is required before confirmation", status_code=422
-        )
-
-    # 7. total_amount must be set and zero or greater
+    # 6. total_amount must be set and zero or greater
     if expense.total_amount is None:
         raise ExpenseServiceError(
             "Expense total amount is required before confirmation", status_code=422

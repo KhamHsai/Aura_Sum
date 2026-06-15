@@ -127,7 +127,10 @@ class ExtractedReceiptData(BaseModel):
     """Full structured data extracted from one receipt image or PDF."""
 
     title: str | None = None
-    merchant_name: str | None = None
+    merchant_name: str | None = None          # kept for backward compat; mapped to paid_to
+    paid_to: str | None = None                # who was paid (person or shop name)
+    tax_id: str | None = None                 # tax ID / VAT registration number on receipt
+    category_name: str | None = None          # AI-guessed category for the whole expense
     receipt_number: str | None = None
     receipt_date: date | None = None
     receipt_time: time | None = None
@@ -145,8 +148,8 @@ class ExtractedReceiptData(BaseModel):
     # ── String normalisation ──────────────────────────────────────────────
 
     @field_validator(
-        "title", "merchant_name", "receipt_number",
-        "document_type", "payment_method",
+        "title", "merchant_name", "paid_to", "tax_id", "category_name",
+        "receipt_number", "document_type", "payment_method",
         mode="before",
     )
     @classmethod

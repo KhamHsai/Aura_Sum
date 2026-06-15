@@ -21,10 +21,12 @@ export interface Expense {
   id: number
   user_id: number
   category_id: number | null
-  title: string
-  merchant_name: string | null
+  category_name: string | null   // resolved or AI-guessed; present on AI extraction
+  paid_to: string | null
+  tax_id: string | null
   receipt_number: string | null
   receipt_date: string    // date string: "YYYY-MM-DD"
+  receipt_time: string | null
   payment_method: string | null
   currency: string
   subtotal: string | null
@@ -47,6 +49,7 @@ export interface ExpenseItemFormData {
   original_name: string
   name_en: string
   name_th: string
+  display_name: string   // virtual: shows name_en or name_th based on current locale
   quantity: string
   unit: string
   unit_price: string
@@ -56,11 +59,11 @@ export interface ExpenseItemFormData {
 
 export interface ExpenseFormData {
   category_id: number | null
-  title: string
-  merchant_name: string
+  category_name: string    // manual text entry — resolved to category_id on submit
+  paid_to: string
+  tax_id: string
   receipt_number: string
   receipt_date: string        // "YYYY-MM-DD"
-  document_type: string       // informational only — not in backend schema
   payment_method: string
   currency: string
   subtotal: string
@@ -73,26 +76,26 @@ export interface ExpenseFormData {
 
 // What is actually sent to POST /api/expenses
 export interface ExpenseCreateRequest {
-  category_id: number
-  title: string
-  merchant_name: string | null
-  receipt_number: string | null
+  category_id?: number | null
+  paid_to?: string | null
+  tax_id?: string | null
+  receipt_number?: string | null
   receipt_date: string
-  payment_method: string | null
+  payment_method?: string | null
   currency: string
-  subtotal: string | null
-  tax_amount: string | null
-  discount_amount: string | null
+  subtotal?: string | null
+  tax_amount?: string | null
+  discount_amount?: string | null
   total_amount: string
-  notes: string | null
+  notes?: string | null
   items: ExpenseItemCreateRequest[]
 }
 
 // What is actually sent to PUT /api/expenses/{id}
 export interface ExpenseUpdateRequest {
   category_id?: number | null
-  title?: string
-  merchant_name?: string | null
+  paid_to?: string | null
+  tax_id?: string | null
   receipt_number?: string | null
   receipt_date?: string
   payment_method?: string | null

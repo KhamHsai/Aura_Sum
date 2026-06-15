@@ -62,7 +62,8 @@
   "expense_not_found": "Expense not found.",
 
   "title": "Title",
-  "merchant": "Merchant",
+  "paid_to": "Paid To",
+  "tax_id": "Tax ID",
   "category": "Category",
   "receipt_number": "Receipt Number",
   "receipt_date": "Receipt Date",
@@ -116,6 +117,8 @@
   "total_required": "Total amount is required.",
   "invalid_amount": "Enter a valid amount (0 or greater).",
   "item_name_required": "At least one name is required for this item.",
+  "item_name": "Item Name",
+  "category_placeholder": "e.g. Food & Drink, Transport",
   "add_item": "Add Item",
   "remove_item": "Remove Item",
   "item": "Item",
@@ -125,7 +128,7 @@
   "saving": "Saving…",
   "select_category": "Select category",
   "no_items_added": "No items added yet.",
-  "validation_error": "Please fix the errors above.",
+  "show_more_fields": "Show more fields",  "validation_error": "Please fix the errors above.",
 
   "delete_expense": "Delete Expense",
   "delete_expense_title": "Delete this expense?",

@@ -30,9 +30,11 @@
       <div class="detail-card">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
           <div>
-            <h1 style="font-size:1.5rem; color:#1a1a2e; margin-bottom:0.25rem;">{{ expense.title }}</h1>
+            <h1 style="font-size:1.5rem; color:#1a1a2e; margin-bottom:0.25rem;">
+              {{ expense.paid_to ?? t('not_available') }}
+            </h1>
             <div style="color:#555; font-size:0.95rem;">
-              {{ expense.merchant_name ?? t('not_available') }}
+              {{ formatDate(expense.receipt_date) }}
             </div>
           </div>
           <div style="text-align:right;">
@@ -74,46 +76,48 @@
 
         <div class="detail-grid">
           <div class="detail-field">
+            <label>{{ t('paid_to') }}</label>
+            <span>{{ expense.paid_to ?? t('not_available') }}</span>
+          </div>
+          <div v-if="expense.tax_id" class="detail-field">
+            <label>{{ t('tax_id') }}</label>
+            <span>{{ expense.tax_id }}</span>
+          </div>
+          <div class="detail-field">
             <label>{{ t('receipt_date') }}</label>
             <span>{{ formatDate(expense.receipt_date) }}</span>
           </div>
-          <div class="detail-field">
+          <div v-if="expense.receipt_number" class="detail-field">
             <label>{{ t('receipt_number') }}</label>
-            <span>{{ expense.receipt_number ?? t('not_available') }}</span>
+            <span>{{ expense.receipt_number }}</span>
           </div>
           <div class="detail-field">
             <label>{{ t('category') }}</label>
-            <span>
-              {{
-                expense.category_id !== null
-                  ? `${t('category')} #${expense.category_id}`
-                  : t('uncategorized')
-              }}
-            </span>
+            <span>{{ expense.category_name ?? t('uncategorized') }}</span>
           </div>
-          <div class="detail-field">
+          <div v-if="expense.payment_method" class="detail-field">
             <label>{{ t('payment_method') }}</label>
-            <span>{{ expense.payment_method ?? t('not_available') }}</span>
+            <span>{{ expense.payment_method }}</span>
           </div>
           <div class="detail-field">
             <label>{{ t('currency') }}</label>
             <span>{{ expense.currency }}</span>
           </div>
-          <div class="detail-field">
+          <div v-if="expense.subtotal" class="detail-field">
             <label>{{ t('subtotal') }}</label>
             <span>{{ formatMoney(expense.subtotal, expense.currency) }}</span>
           </div>
-          <div class="detail-field">
+          <div v-if="expense.tax_amount" class="detail-field">
             <label>{{ t('tax') }}</label>
             <span>{{ formatMoney(expense.tax_amount, expense.currency) }}</span>
           </div>
-          <div class="detail-field">
+          <div v-if="expense.discount_amount" class="detail-field">
             <label>{{ t('discount') }}</label>
             <span>{{ formatMoney(expense.discount_amount, expense.currency) }}</span>
           </div>
-          <div class="detail-field">
+          <div v-if="expense.notes" class="detail-field">
             <label>{{ t('notes') }}</label>
-            <span>{{ expense.notes ?? t('not_available') }}</span>
+            <span>{{ expense.notes }}</span>
           </div>
           <div class="detail-field">
             <label>{{ t('created_at') }}</label>
@@ -138,34 +142,22 @@
           <table class="items-table">
             <thead>
               <tr>
-                <th>{{ t('original_name') }}</th>
-                <th>{{ t('name_en') }}</th>
-                <th>{{ t('name_th') }}</th>
+                <th>{{ t('item_name') }}</th>
                 <th>{{ t('quantity') }}</th>
                 <th>{{ t('unit') }}</th>
                 <th>{{ t('unit_price') }}</th>
                 <th>{{ t('discount') }}</th>
                 <th>{{ t('total_price') }}</th>
-                <th>{{ t('category') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="item in activeItems" :key="item.id">
                 <td>{{ itemDisplayName(item) }}</td>
-                <td>{{ item.name_en ?? t('not_available') }}</td>
-                <td>{{ item.name_th ?? t('not_available') }}</td>
                 <td>{{ item.quantity }}</td>
-                <td>{{ item.unit ?? t('not_available') }}</td>
+                <td>{{ item.unit ?? '—' }}</td>
                 <td>{{ formatMoney(item.unit_price, expense.currency) }}</td>
                 <td>{{ formatMoney(item.discount_amount, expense.currency) }}</td>
                 <td>{{ formatMoney(item.total_price, expense.currency) }}</td>
-                <td>
-                  {{
-                    item.category_id !== null
-                      ? `${t('category')} #${item.category_id}`
-                      : t('uncategorized')
-                  }}
-                </td>
               </tr>
             </tbody>
           </table>
@@ -216,18 +208,6 @@
 
         <!-- Translation result -->
         <div v-if="translationResult && !isTranslating" class="translation-result">
-
-          <!-- Title comparison -->
-          <div class="translation-comparison">
-            <div class="translation-original">
-              <label>{{ t('original_title') }}</label>
-              <span>{{ expense.title }}</span>
-            </div>
-            <div class="translation-translated">
-              <label>{{ t('translated_title') }}</label>
-              <span>{{ translationResult.translated_title ?? t('no_translation_available') }}</span>
-            </div>
-          </div>
 
           <!-- Notes comparison (only if expense has notes) -->
           <div v-if="expense.notes" class="translation-comparison">
@@ -304,7 +284,10 @@ const translationError = ref<string | null>(null)
 const activeItems = computed<ExpenseItem[]>(() => expense.value?.items ?? [])
 
 function itemDisplayName(item: ExpenseItem): string {
-  return item.name_en ?? item.name_th ?? item.original_name ?? t('unnamed_item')
+  if (locale.value === 'th') {
+    return item.name_th ?? item.original_name ?? item.name_en ?? t('unnamed_item')
+  }
+  return item.name_en ?? item.original_name ?? item.name_th ?? t('unnamed_item')
 }
 
 async function loadExpense(): Promise<void> {

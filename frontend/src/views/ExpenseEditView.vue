@@ -70,7 +70,7 @@ import type {
   ExpenseItemCreateRequest,
 } from '../types/expense'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 const route = useRoute()
 
@@ -97,11 +97,11 @@ const initialForm = ref<ExpenseFormData>(emptyForm())
 function emptyForm(): ExpenseFormData {
   return {
     category_id: null,
-    title: '',
-    merchant_name: '',
+    category_name: '',
+    paid_to: '',
+    tax_id: '',
     receipt_number: '',
     receipt_date: '',
-    document_type: '',
     payment_method: '',
     currency: 'THB',
     subtotal: '',
@@ -113,15 +113,21 @@ function emptyForm(): ExpenseFormData {
   }
 }
 
-// Convert an Expense response into editable form data
 function expenseToForm(expense: Expense): ExpenseFormData {
+  // Use category_name from response if present (AI extraction sends it back),
+  // otherwise resolve from categories list by id.
+  let catName = expense.category_name ?? ''
+  if (!catName && expense.category_id) {
+    const cat = categories.value.find(c => c.id === expense.category_id)
+    catName = cat ? (cat.name_en || cat.name_th) : ''
+  }
   return {
     category_id: expense.category_id,
-    title: expense.title,
-    merchant_name: expense.merchant_name ?? '',
+    category_name: catName,
+    paid_to: expense.paid_to ?? '',
+    tax_id: expense.tax_id ?? '',
     receipt_number: expense.receipt_number ?? '',
     receipt_date: expense.receipt_date,
-    document_type: '',
     payment_method: expense.payment_method ?? '',
     currency: expense.currency,
     subtotal: expense.subtotal ?? '',
@@ -134,6 +140,10 @@ function expenseToForm(expense: Expense): ExpenseFormData {
       original_name: item.original_name,
       name_en: item.name_en ?? '',
       name_th: item.name_th ?? '',
+      // display_name shows the correct language — TH receipt stays Thai by default
+      display_name: locale.value === 'th'
+        ? (item.name_th ?? item.original_name ?? item.name_en ?? '')
+        : (item.name_en ?? item.original_name ?? item.name_th ?? ''),
       quantity: item.quantity,
       unit: item.unit ?? '',
       unit_price: item.unit_price ?? '',
@@ -143,10 +153,26 @@ function expenseToForm(expense: Expense): ExpenseFormData {
   }
 }
 
+// Resolve category_name text → category_id (case-insensitive, partial match)
+function resolveCategoryId(name: string): number | null {
+  const search = name.trim().toLowerCase()
+  if (!search) return null
+  let found = categories.value.find(
+    c => c.name_en.toLowerCase() === search || c.name_th.toLowerCase() === search
+  )
+  if (!found) {
+    found = categories.value.find(
+      c => c.name_en.toLowerCase().includes(search) || search.includes(c.name_en.toLowerCase()) ||
+           c.name_th.toLowerCase().includes(search) || search.includes(c.name_th.toLowerCase())
+    )
+  }
+  return found?.id ?? null
+}
+
 // Build the PUT request payload — always include all items (full replacement)
 function buildRequest(form: ExpenseFormData): ExpenseUpdateRequest {
   const items: ExpenseItemCreateRequest[] = form.items.map((item) => ({
-    original_name: item.original_name.trim() || item.name_en.trim() || item.name_th.trim(),
+    original_name: item.original_name.trim() || item.name_th.trim() || item.display_name.trim() || item.name_en.trim(),
     name_en: item.name_en.trim() || null,
     name_th: item.name_th.trim() || null,
     quantity: item.quantity.trim(),
@@ -157,10 +183,13 @@ function buildRequest(form: ExpenseFormData): ExpenseUpdateRequest {
     category_id: item.category_id,
   }))
 
+  // Always resolve from the visible text field — that's what the user edited
+  const resolvedCategoryId = resolveCategoryId(form.category_name)
+
   return {
-    category_id: form.category_id,
-    title: form.title.trim(),
-    merchant_name: form.merchant_name.trim() || null,
+    category_id: resolvedCategoryId,
+    paid_to: form.paid_to.trim() || null,
+    tax_id: form.tax_id.trim() || null,
     receipt_number: form.receipt_number.trim() || null,
     receipt_date: form.receipt_date,
     payment_method: form.payment_method.trim() || null,
