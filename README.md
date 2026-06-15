@@ -230,7 +230,7 @@ npm run test:e2e
 | `DATABASE_URL` | ✅ | MySQL connection string |
 | `JWT_SECRET_KEY` | ✅ | Secret key for signing JWT tokens |
 | `OPENROUTER_API_KEY` | ✅ | API key from openrouter.ai |
-| `OPENROUTER_MODEL` | — | AI model (default: `google/gemini-2.0-flash-exp:free`) |
+| `OPENROUTER_MODEL` | — | AI model (default: `nvidia/nemotron-nano-12b-v2-vl:free`) |
 | `FRONTEND_URL` | — | Frontend origin for CORS (e.g. `http://localhost:5173`) |
 | `UPLOAD_DIR` | — | Path to store uploaded receipt files (default: `uploads/receipts`) |
 | `MAX_RECEIPT_FILE_SIZE_MB` | — | Max upload size in MB (default: `10`) |
