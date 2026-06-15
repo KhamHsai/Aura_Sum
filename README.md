@@ -54,7 +54,7 @@ Aura Sum is a full-stack web application that helps users track their personal e
 | Setting | Value |
 |---|---|
 | Provider | [OpenRouter](https://openrouter.ai) |
-| Model | `google/gemini-2.0-flash-exp:free` |
+| Model | `nvidia/nemotron-nano-12b-v2-vl:free` |
 | API | OpenAI-compatible (`/chat/completions`) |
 
 The AI is used in a two-step pipeline:
