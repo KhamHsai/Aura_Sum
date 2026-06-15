@@ -61,22 +61,19 @@ class GeminiServiceError(Exception):
 # Step 1 prompt — just read, don't structure
 # ---------------------------------------------------------------------------
 
-READ_PROMPT = """Read this receipt image and transcribe ALL text you can see, exactly as printed.
+READ_PROMPT = """Analyze this receipt image and output TWO sections:
 
-Include every line:
-- TAX ID or VAT registration number
-- Date and time
-- Receipt or invoice number
-- Every line item: code, name, quantity, and price
-- Subtotal, VAT/tax, discount, total amount
-- Payment method (cash, card, PromptPay, QR, etc.)
+SECTION 1 — KEY FIELDS (structured, one per line):
+MERCHANT_NAME: <the business, restaurant, or shop name printed on the receipt — not an address, not a document title>
+PAID_TO: <same as MERCHANT_NAME, or a person's name if this is a personal payment>
 
-Important:
-- Copy Thai text exactly as you see it, character by character
-- Copy numbers exactly (do not round or change)
-- If a field is not visible, skip it — do not guess
+SECTION 2 — FULL TRANSCRIPT:
+Transcribe ALL text you can see on the receipt, exactly as printed, line by line.
+Include: TAX ID, date, time, receipt number, every line item with quantity and price,
+subtotal, tax, discount, total, payment method.
+Copy Thai text character by character. Copy numbers exactly. Skip nothing.
 
-Output only the transcribed text. No analysis, no JSON, no explanation."""
+Output only these two sections. No extra commentary."""
 
 
 # ---------------------------------------------------------------------------
@@ -392,22 +389,86 @@ def _guess_category(text: str) -> str:
     return "Other"
 
 
+# ── Structured field extractor (from Section 1 of the AI response) ────────────
+
+_FIELD_RE = re.compile(r"^([A-Z_]+):\s*(.+)$")
+
+def _extract_structured_fields(response_text: str) -> dict[str, str]:
+    """Parse key:value lines from Section 1 of the AI response.
+
+    Returns a dict like {'MERCHANT_NAME': 'Shinkanzen Sushi', 'PAID_TO': 'Shinkanzen Sushi'}.
+    Values of 'none', 'n/a', 'unknown', '-' are treated as absent.
+    """
+    _ABSENT = {"none", "n/a", "unknown", "not found", "not visible", "-", ""}
+    fields: dict[str, str] = {}
+    for line in response_text.splitlines():
+        m = _FIELD_RE.match(line.strip())
+        if not m:
+            continue
+        key, value = m.group(1).strip(), m.group(2).strip()
+        if value.lower() not in _ABSENT:
+            fields[key] = value
+    return fields
+
+
+def _split_response(response_text: str) -> tuple[dict[str, str], str]:
+    """Split the AI response into structured fields and the transcript text.
+
+    The AI is asked to output:
+      SECTION 1 — KEY FIELDS
+      SECTION 2 — FULL TRANSCRIPT
+
+    Returns (fields_dict, transcript_text).
+    If Section 2 is absent, falls back to using the whole response as transcript.
+    """
+    # Try to find the transcript section marker
+    transcript_marker = re.search(
+        r"(?:SECTION\s*2|FULL\s*TRANSCRIPT|---+)",
+        response_text,
+        re.IGNORECASE,
+    )
+    if transcript_marker:
+        header_part = response_text[:transcript_marker.start()]
+        transcript = response_text[transcript_marker.end():].strip()
+    else:
+        # No clear section split — treat whole response as transcript,
+        # but still try to extract any KEY: value lines at the top
+        header_part = response_text
+        transcript = response_text
+
+    fields = _extract_structured_fields(header_part)
+    return fields, transcript
+
+
 # ── Main OCR-text → ExtractedReceiptData ─────────────────────────────────────
 
 def _parse_ocr_to_data(ocr_text: str) -> ExtractedReceiptData:
-    """Convert raw OCR text into a validated ExtractedReceiptData object."""
-    receipt_date = _parse_date(ocr_text)
-    receipt_time = _parse_time(ocr_text)
-    total = _find_total(ocr_text)
-    tax_id = _find_tax_id(ocr_text)
-    receipt_no = _find_receipt_number(ocr_text)
-    paid_to = _find_paid_to(ocr_text)
-    payment = _find_payment_method(ocr_text)
-    items = _parse_items(ocr_text)
-    category = _guess_category(ocr_text)
+    """Convert raw AI response into a validated ExtractedReceiptData object.
+
+    The AI response has two sections:
+      Section 1: structured key fields (MERCHANT_NAME, PAID_TO)
+      Section 2: full receipt transcript for regex parsing
+    """
+    fields, transcript = _split_response(ocr_text)
+
+    # paid_to: prefer AI-identified merchant name, fall back to heuristic
+    paid_to = (
+        fields.get("MERCHANT_NAME")
+        or fields.get("PAID_TO")
+        or _find_paid_to(transcript)
+    )
+
+    receipt_date = _parse_date(transcript)
+    receipt_time = _parse_time(transcript)
+    total = _find_total(transcript)
+    tax_id = _find_tax_id(transcript)
+    receipt_no = _find_receipt_number(transcript)
+    payment = _find_payment_method(transcript)
+    items = _parse_items(transcript)
+    category = _guess_category(transcript)
 
     # Detect language: if any Thai unicode block chars → "th"
-    language = "th" if _has_thai(ocr_text) else "en"
+    language = "th" if _has_thai(transcript) else "en"
 
     # total_amount is required — use 0 if we genuinely can't find it
     if total is None:
