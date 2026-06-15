@@ -82,10 +82,12 @@ function makeExpense(overrides: Partial<Expense> = {}): Expense {
     id: 1,
     user_id: 1,
     category_id: null,
-    title: 'Test Expense',
-    merchant_name: 'Test Merchant',
+    category_name: null,
+    paid_to: null,
+    tax_id: null,
     receipt_number: null,
     receipt_date: '2024-01-15',
+    receipt_time: null,
     payment_method: null,
     currency: 'THB',
     subtotal: null,
@@ -311,20 +313,20 @@ it('sorts currencies alphabetically', async () => {
 
 it('sorts recent expenses by created_at descending', async () => {
   mockGetExpenses.mockResolvedValue([
-    makeExpense({ id: 1, title: 'Old', created_at: '2024-01-01T00:00:00' }),
-    makeExpense({ id: 2, title: 'New', created_at: '2024-06-01T00:00:00' }),
+    makeExpense({ id: 1, paid_to: 'Old Shop', created_at: '2024-01-01T00:00:00' }),
+    makeExpense({ id: 2, paid_to: 'New Shop', created_at: '2024-06-01T00:00:00' }),
   ])
   mockGetReceipts.mockResolvedValue([])
   const wrapper = await mountDashboard()
   await flushPromises()
   const titles = wrapper.findAll('.recent-expense-title').map((el) => el.text())
-  expect(titles[0]).toBe('New')
-  expect(titles[1]).toBe('Old')
+  expect(titles[0]).toBe('New Shop')
+  expect(titles[1]).toBe('Old Shop')
 })
 
 it('shows at most 5 recent expenses', async () => {
   const expenses = Array.from({ length: 8 }, (_, i) =>
-    makeExpense({ id: i + 1, title: `Expense ${i + 1}`, created_at: `2024-01-${String(i + 1).padStart(2, '0')}T00:00:00` }),
+    makeExpense({ id: i + 1, created_at: `2024-01-${String(i + 1).padStart(2, '0')}T00:00:00` }),
   )
   mockGetExpenses.mockResolvedValue(expenses)
   mockGetReceipts.mockResolvedValue([])

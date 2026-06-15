@@ -5,8 +5,7 @@
  *   Request:  { target_language: 'en' | 'th' }
  *   Response: ExpenseTranslationResponse
  *
- * Note: The backend translates title, notes, and item names only.
- * Merchant name is NOT translated by the backend.
+ * Note: The backend translates notes and item names only.
  */
 
 export type TranslationLanguage = 'en' | 'th'
@@ -30,7 +29,6 @@ export interface ExpenseTranslationResponse {
   expense_id: number
   source_language: TranslationLanguage
   target_language: TranslationLanguage
-  translated_title: string | null
   translated_notes: string | null
   items: TranslatedExpenseItem[]
   reused_existing_translation: boolean

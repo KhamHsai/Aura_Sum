@@ -70,10 +70,12 @@ const fakeExpense = {
   id: 5,
   user_id: 1,
   category_id: 1,
-  title: 'Lunch',
-  merchant_name: 'Noodle Shop',
+  category_name: 'Food',
+  paid_to: 'Noodle Shop',
+  tax_id: null,
   receipt_number: 'R-100',
   receipt_date: '2024-06-01',
+  receipt_time: null,
   payment_method: 'Cash',
   currency: 'THB',
   subtotal: '90.00',
@@ -151,8 +153,7 @@ it('create success shows success alert', async () => {
   const wrapper = await mountCreate()
   await flushPromises()
 
-  await wrapper.find('#ef-category').setValue('1')
-  await wrapper.find('#ef-title').setValue('Coffee')
+  await wrapper.find('#ef-category').setValue('Food')
   await wrapper.find('#ef-total').setValue('100')
 
   await wrapper.find('form').trigger('submit')
@@ -169,8 +170,7 @@ it('create success navigates to detail page after alert', async () => {
   const wrapper = await mountCreate()
   await flushPromises()
 
-  await wrapper.find('#ef-category').setValue('1')
-  await wrapper.find('#ef-title').setValue('Coffee')
+  await wrapper.find('#ef-category').setValue('Food')
   await wrapper.find('#ef-total').setValue('100')
 
   await wrapper.find('form').trigger('submit')
@@ -234,8 +234,7 @@ it('create network failure shows error alert', async () => {
   const wrapper = await mountCreate()
   await flushPromises()
 
-  await wrapper.find('#ef-category').setValue('1')
-  await wrapper.find('#ef-title').setValue('Coffee')
+  await wrapper.find('#ef-category').setValue('Food')
   await wrapper.find('#ef-total').setValue('100')
 
   await wrapper.find('form').trigger('submit')
@@ -249,14 +248,13 @@ it('create network failure shows error alert', async () => {
 it('create 422 backend error shows inline error but not a popup', async () => {
   mockGetCategories.mockResolvedValue(fakeCategories)
   mockCreateExpense.mockRejectedValue({
-    response: { status: 422, data: { detail: 'title is invalid' } },
+    response: { status: 422, data: { detail: 'total_amount is invalid' } },
   })
 
   const wrapper = await mountCreate()
   await flushPromises()
 
-  await wrapper.find('#ef-category').setValue('1')
-  await wrapper.find('#ef-title').setValue('Bad')
+  await wrapper.find('#ef-category').setValue('Food')
   await wrapper.find('#ef-total').setValue('50')
 
   await wrapper.find('form').trigger('submit')
@@ -274,8 +272,7 @@ it('create success alert uses expense_created i18n key as title', async () => {
   const wrapper = await mountCreate()
   await flushPromises()
 
-  await wrapper.find('#ef-category').setValue('1')
-  await wrapper.find('#ef-title').setValue('Coffee')
+  await wrapper.find('#ef-category').setValue('Food')
   await wrapper.find('#ef-total').setValue('100')
 
   await wrapper.find('form').trigger('submit')
@@ -307,8 +304,7 @@ it('create success alert in Thai locale uses Thai expense_created text', async (
   const wrapper = await mountCreate('th')
   await flushPromises()
 
-  await wrapper.find('#ef-category').setValue('1')
-  await wrapper.find('#ef-title').setValue('Coffee')
+  await wrapper.find('#ef-category').setValue('Food')
   await wrapper.find('#ef-total').setValue('100')
 
   await wrapper.find('form').trigger('submit')

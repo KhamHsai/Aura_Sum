@@ -61,10 +61,12 @@ const sampleExpense = {
   id: 1,
   user_id: 42,
   category_id: 3,
-  title: 'ค่าอาหารกลางวัน',
-  merchant_name: 'ร้านข้าวมันไก่',
+  category_name: 'Food & Drink',
+  paid_to: 'ร้านข้าวมันไก่',
+  tax_id: null,
   receipt_number: 'R-001',
   receipt_date: '2024-03-01',
+  receipt_time: null,
   payment_method: 'Cash',
   currency: 'THB',
   subtotal: '90.91',
@@ -101,7 +103,6 @@ const translationResponseEn = {
   expense_id: 1,
   source_language: 'th' as const,
   target_language: 'en' as const,
-  translated_title: 'Lunch Expense',
   translated_notes: 'Lunch with colleagues',
   items: [
     {
@@ -119,7 +120,6 @@ const translationResponseTh = {
   expense_id: 1,
   source_language: 'en' as const,
   target_language: 'th' as const,
-  translated_title: 'ค่าอาหารกลางวัน',
   translated_notes: 'ทานข้าวกลางวันกับเพื่อนร่วมงาน',
   items: [
     {
@@ -306,7 +306,7 @@ it('stores and displays the translation result on success', async () => {
   await translateBtn!.trigger('click')
   await flushPromises()
 
-  expect(wrapper.text()).toContain('Lunch Expense')
+  expect(wrapper.text()).toContain('Lunch with colleagues')
 })
 
 // ── 13. Success alert is shown ────────────────────────────────────────────────
@@ -324,8 +324,8 @@ it('shows success alert after translation completes', async () => {
   expect(mockShowSuccess).toHaveBeenCalledWith(en.translation_completed, en.translation_completed_message)
 })
 
-// ── 14. Original title remains visible ───────────────────────────────────────
-it('keeps the original expense title visible after translation', async () => {
+// ── 14. Original paid_to remains visible ─────────────────────────────────────
+it('keeps the original expense paid_to visible after translation', async () => {
   mockGetExpenseById.mockResolvedValue(sampleExpense)
   mockTranslateExpense.mockResolvedValue(translationResponseEn)
 
@@ -336,11 +336,11 @@ it('keeps the original expense title visible after translation', async () => {
   await translateBtn!.trigger('click')
   await flushPromises()
 
-  expect(wrapper.text()).toContain('ค่าอาหารกลางวัน')
+  expect(wrapper.text()).toContain('ร้านข้าวมันไก่')
 })
 
-// ── 15. Translated title is displayed ────────────────────────────────────────
-it('displays the translated title', async () => {
+// ── 15. Translated notes are displayed ────────────────────────────────────────
+it('displays the translated notes after translation', async () => {
   mockGetExpenseById.mockResolvedValue(sampleExpense)
   mockTranslateExpense.mockResolvedValue(translationResponseEn)
 
@@ -351,7 +351,7 @@ it('displays the translated title', async () => {
   await translateBtn!.trigger('click')
   await flushPromises()
 
-  expect(wrapper.text()).toContain('Lunch Expense')
+  expect(wrapper.text()).toContain('Lunch with colleagues')
 })
 
 // ── 16. Original notes remain visible ────────────────────────────────────────
@@ -534,7 +534,7 @@ it('network failure shows safe error alert', async () => {
 })
 
 // ── 26. Failure keeps original expense visible ───────────────────────────────
-it('keeps the original expense title visible after a translation failure', async () => {
+it('keeps the original paid_to visible after a translation failure', async () => {
   mockGetExpenseById.mockResolvedValue(sampleExpense)
   mockTranslateExpense.mockRejectedValue({ response: { status: 500 } })
 
@@ -545,12 +545,12 @@ it('keeps the original expense title visible after a translation failure', async
   await translateBtn!.trigger('click')
   await flushPromises()
 
-  expect(wrapper.text()).toContain('ค่าอาหารกลางวัน')
+  expect(wrapper.text()).toContain('ร้านข้าวมันไก่')
 })
 
 // ── 27. Thai target translation result is displayed ──────────────────────────
-it('displays Thai translated title when target is Thai', async () => {
-  const thaiExpense = { ...sampleExpense, title: 'Lunch Expense', notes: 'Lunch with team' }
+it('displays Thai translated notes when target is Thai', async () => {
+  const thaiExpense = { ...sampleExpense, notes: 'Lunch with team' }
   mockGetExpenseById.mockResolvedValue(thaiExpense)
   mockTranslateExpense.mockResolvedValue(translationResponseTh)
 
@@ -564,7 +564,7 @@ it('displays Thai translated title when target is Thai', async () => {
   await translateBtn!.trigger('click')
   await flushPromises()
 
-  expect(wrapper.text()).toContain('ค่าอาหารกลางวัน')
+  expect(wrapper.text()).toContain('ทานข้าวกลางวันกับเพื่อนร่วมงาน')
 })
 
 // ── 28. English labels render ────────────────────────────────────────────────

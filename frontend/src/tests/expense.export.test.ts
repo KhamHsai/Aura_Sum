@@ -360,16 +360,16 @@ describe('existing list features unaffected', () => {
   it('still loads and displays expenses', async () => {
     mockGetExpenses.mockResolvedValue([
       {
-        id: 1, user_id: 1, category_id: 1, title: 'Coffee', merchant_name: 'Cafe',
-        receipt_number: null, receipt_date: '2024-01-01', payment_method: 'Cash',
-        currency: 'THB', subtotal: null, tax_amount: null, discount_amount: null,
-        total_amount: '50.00', notes: null, is_confirmed: false,
+        id: 1, user_id: 1, category_id: 1, category_name: 'Food', paid_to: 'Coffee Shop',
+        tax_id: null, receipt_number: null, receipt_date: '2024-01-01', receipt_time: null,
+        payment_method: 'Cash', currency: 'THB', subtotal: null, tax_amount: null,
+        discount_amount: null, total_amount: '50.00', notes: null, is_confirmed: false,
         created_at: '2024-01-01T00:00:00', updated_at: '2024-01-01T00:00:00', items: [],
       },
     ])
     const wrapper = await mountList()
     await flushPromises()
-    expect(wrapper.text()).toContain('Coffee')
+    expect(wrapper.text()).toContain('Coffee Shop')
   })
 
   it('still shows the Add Expense button', async () => {
