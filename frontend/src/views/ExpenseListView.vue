@@ -49,9 +49,9 @@
       >
         <div class="expense-card-top">
           <div>
-            <div class="expense-card-title">{{ expense.title }}</div>
+            <div class="expense-card-title">{{ expense.paid_to ?? t('not_available') }}</div>
             <div class="expense-card-merchant">
-              {{ expense.merchant_name ?? t('not_available') }}
+              {{ formatDate(expense.receipt_date) }}
             </div>
           </div>
           <div class="expense-card-amount">

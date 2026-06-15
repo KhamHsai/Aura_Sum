@@ -10,6 +10,9 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const isLoading = ref(false)
   const error = ref<string | null>(null)
+  // Becomes true once initializeAuth() has finished (success or failure).
+  // The router guard waits for this before making auth decisions.
+  const authReady = ref(false)
 
   const isAuthenticated = computed(() => token.value !== null && user.value !== null)
 
@@ -17,7 +20,10 @@ export const useAuthStore = defineStore('auth', () => {
   // Called once at app startup. Clears auth data if the token is invalid.
   async function initializeAuth(): Promise<void> {
     const saved = localStorage.getItem(TOKEN_KEY)
-    if (!saved) return
+    if (!saved) {
+      authReady.value = true
+      return
+    }
 
     token.value = saved
     try {
@@ -25,6 +31,8 @@ export const useAuthStore = defineStore('auth', () => {
     } catch {
       // Token is expired or invalid — clear everything.
       clearAuth()
+    } finally {
+      authReady.value = true
     }
   }
 
@@ -104,6 +112,7 @@ export const useAuthStore = defineStore('auth', () => {
     isLoading,
     error,
     isAuthenticated,
+    authReady,
     initializeAuth,
     register,
     login,

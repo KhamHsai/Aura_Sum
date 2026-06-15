@@ -51,11 +51,11 @@ const backendError = ref<string | null>(null)
 // Empty starting form — defaults that make sense for a new expense
 const initialForm: ExpenseFormData = {
   category_id: null,
-  title: '',
-  merchant_name: '',
+  category_name: '',
+  paid_to: '',
+  tax_id: '',
   receipt_number: '',
   receipt_date: todayDateString(),
-  document_type: '',
   payment_method: '',
   currency: 'THB',
   subtotal: '',
@@ -81,10 +81,28 @@ async function loadCategories(): Promise<void> {
   }
 }
 
+// Resolve category_name text → category_id (case-insensitive, partial match)
+function resolveCategoryId(name: string): number | null {
+  const search = name.trim().toLowerCase()
+  if (!search) return null
+  // Exact match first
+  let found = categories.value.find(
+    c => c.name_en.toLowerCase() === search || c.name_th.toLowerCase() === search
+  )
+  // Partial match fallback
+  if (!found) {
+    found = categories.value.find(
+      c => c.name_en.toLowerCase().includes(search) || search.includes(c.name_en.toLowerCase()) ||
+           c.name_th.toLowerCase().includes(search) || search.includes(c.name_th.toLowerCase())
+    )
+  }
+  return found?.id ?? null
+}
+
 // Convert the form data to the exact shape the backend expects
 function buildRequest(form: ExpenseFormData): ExpenseCreateRequest {
   const items: ExpenseItemCreateRequest[] = form.items.map((item) => ({
-    original_name: item.original_name.trim() || (item.name_en.trim() || item.name_th.trim()),
+    original_name: item.original_name.trim() || item.name_th.trim() || item.display_name.trim() || item.name_en.trim(),
     name_en: item.name_en.trim() || null,
     name_th: item.name_th.trim() || null,
     quantity: item.quantity.trim(),
@@ -96,9 +114,9 @@ function buildRequest(form: ExpenseFormData): ExpenseCreateRequest {
   }))
 
   return {
-    category_id: form.category_id as number,
-    title: form.title.trim(),
-    merchant_name: form.merchant_name.trim() || null,
+    category_id: resolveCategoryId(form.category_name),
+    paid_to: form.paid_to.trim() || null,
+    tax_id: form.tax_id.trim() || null,
     receipt_number: form.receipt_number.trim() || null,
     receipt_date: form.receipt_date,
     payment_method: form.payment_method.trim() || null,

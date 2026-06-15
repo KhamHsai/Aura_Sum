@@ -86,8 +86,22 @@ const router = createRouter({
 })
 
 // Global navigation guard.
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
+
+  // Wait for initializeAuth() to finish on first load before making any decision.
+  // This prevents the guard from seeing isAuthenticated=false while the token
+  // is still being validated against the backend.
+  if (!auth.authReady) {
+    await new Promise<void>((resolve) => {
+      const stop = auth.$subscribe(() => {
+        if (auth.authReady) {
+          stop()
+          resolve()
+        }
+      })
+    })
+  }
 
   // Protected route without valid auth → send to login.
   if (to.meta.requiresAuth && !auth.isAuthenticated) {

@@ -12,79 +12,55 @@
 
       <div class="form-grid">
 
-        <!-- Category (required) -->
+        <!-- Category (manual text entry — user types the category name) -->
         <div class="form-group">
-          <label for="ef-category">{{ t('category') }} *</label>
-          <select
+          <label for="ef-category">{{ t('category') }}</label>
+          <input
             id="ef-category"
-            v-model="form.category_id"
-            :class="{ 'input-error': errors.category_id }"
-          >
-            <option :value="null" disabled>{{ t('select_category') }}</option>
-            <option v-for="cat in categories" :key="cat.id" :value="cat.id">
-              {{ locale === 'th' ? (cat.name_th || cat.name_en) : (cat.name_en || cat.name_th) }}
-            </option>
-          </select>
-          <p v-if="errors.category_id" class="field-error">{{ errors.category_id }}</p>
-          <p v-if="categories.length === 0 && !loadingCategories" class="field-error">
-            {{ t('loading_categories') }}
-          </p>
-        </div>
-
-        <!-- Title (required) -->
-        <div class="form-group">
-          <label for="ef-title">{{ t('title') }} *</label>
-          <input
-            id="ef-title"
-            v-model="form.title"
+            v-model="form.category_name"
             type="text"
-            :class="{ 'input-error': errors.title }"
-            :placeholder="t('title')"
+            :placeholder="t('category_placeholder')"
+            list="ef-category-suggestions"
           />
-          <p v-if="errors.title" class="field-error">{{ errors.title }}</p>
+          <!-- Datalist gives soft autocomplete without forcing a choice -->
+          <datalist id="ef-category-suggestions">
+            <option v-for="cat in categories" :key="cat.id"
+              :value="locale === 'th' ? (cat.name_th || cat.name_en) : (cat.name_en || cat.name_th)" />
+          </datalist>
         </div>
 
-        <!-- Merchant Name -->
+        <!-- Paid To (optional, shown always) -->
         <div class="form-group">
-          <label for="ef-merchant">{{ t('merchant') }}</label>
+          <label for="ef-paid-to">{{ t('paid_to') }}</label>
           <input
-            id="ef-merchant"
-            v-model="form.merchant_name"
+            id="ef-paid-to"
+            v-model="form.paid_to"
             type="text"
-            :placeholder="t('merchant')"
+            :placeholder="t('paid_to')"
           />
         </div>
 
-        <!-- Receipt Number -->
-        <div class="form-group">
-          <label for="ef-receipt-number">{{ t('receipt_number') }}</label>
+        <!-- Tax ID — only show if AI filled it or user is editing -->
+        <div v-if="form.tax_id || alwaysShowOptional" class="form-group">
+          <label for="ef-tax-id">{{ t('tax_id') }}</label>
           <input
-            id="ef-receipt-number"
-            v-model="form.receipt_number"
+            id="ef-tax-id"
+            v-model="form.tax_id"
             type="text"
-            :placeholder="t('receipt_number')"
+            :placeholder="t('tax_id')"
           />
         </div>
 
-        <!-- Receipt Date -->
+        <!-- Receipt Date (required) -->
         <div class="form-group">
-          <label for="ef-receipt-date">{{ t('receipt_date') }}</label>
+          <label for="ef-receipt-date">{{ t('receipt_date') }} *</label>
           <input
             id="ef-receipt-date"
             v-model="form.receipt_date"
             type="date"
+            :class="{ 'input-error': errors.receipt_date }"
           />
-        </div>
-
-        <!-- Payment Method -->
-        <div class="form-group">
-          <label for="ef-payment">{{ t('payment_method') }}</label>
-          <input
-            id="ef-payment"
-            v-model="form.payment_method"
-            type="text"
-            :placeholder="t('payment_method')"
-          />
+          <p v-if="errors.receipt_date" class="field-error">{{ errors.receipt_date }}</p>
         </div>
 
         <!-- Currency (required) -->
@@ -101,8 +77,8 @@
           <p v-if="errors.currency" class="field-error">{{ errors.currency }}</p>
         </div>
 
-        <!-- Subtotal -->
-        <div class="form-group">
+        <!-- Subtotal — only show if AI filled it or user is editing -->
+        <div v-if="form.subtotal || alwaysShowOptional" class="form-group">
           <label for="ef-subtotal">{{ t('subtotal') }}</label>
           <input
             id="ef-subtotal"
@@ -115,8 +91,8 @@
           <p v-if="errors.subtotal" class="field-error">{{ errors.subtotal }}</p>
         </div>
 
-        <!-- Tax Amount -->
-        <div class="form-group">
+        <!-- Tax Amount — only show if AI filled it or user is editing -->
+        <div v-if="form.tax_amount || alwaysShowOptional" class="form-group">
           <label for="ef-tax">{{ t('tax') }}</label>
           <input
             id="ef-tax"
@@ -129,8 +105,8 @@
           <p v-if="errors.tax_amount" class="field-error">{{ errors.tax_amount }}</p>
         </div>
 
-        <!-- Discount Amount -->
-        <div class="form-group">
+        <!-- Discount — only show if AI filled it or user is editing -->
+        <div v-if="form.discount_amount || alwaysShowOptional" class="form-group">
           <label for="ef-discount">{{ t('discount') }}</label>
           <input
             id="ef-discount"
@@ -159,7 +135,7 @@
 
       </div>
 
-      <!-- Notes (full width) -->
+      <!-- Notes (full width, always shown) -->
       <div class="form-group" style="margin-top:0.5rem;">
         <label for="ef-notes">{{ t('notes') }}</label>
         <textarea
@@ -169,6 +145,13 @@
           :placeholder="t('notes')"
           class="form-textarea"
         />
+      </div>
+
+      <!-- Show more fields toggle (when optional fields are hidden) -->
+      <div v-if="!alwaysShowOptional" style="margin-top:0.75rem;">
+        <button type="button" class="btn-text-link" @click="alwaysShowOptional = true">
+          + {{ t('show_more_fields') }}
+        </button>
       </div>
     </div>
 
@@ -185,12 +168,7 @@
         {{ t('no_items_added') }}
       </p>
 
-      <!-- Item rows -->
-      <div
-        v-for="(item, index) in form.items"
-        :key="index"
-        class="item-row"
-      >
+      <div v-for="(item, index) in form.items" :key="index" class="item-row">
         <div class="item-row-header">
           <span class="item-row-label">{{ t('item') }} {{ index + 1 }}</span>
           <button type="button" class="btn-remove-item" @click="removeItem(index)">
@@ -198,52 +176,17 @@
           </button>
         </div>
 
-        <!-- Item name error -->
-        <p v-if="itemErrors[index]?.name" class="field-error" style="margin-bottom:0.5rem;">
-          {{ itemErrors[index].name }}
-        </p>
-
         <div class="form-grid">
 
-          <!-- Item Category -->
+          <!-- Item name: shows name in current UI language, falls back to original_name -->
           <div class="form-group">
-            <label>{{ t('category') }}</label>
-            <select v-model="item.category_id">
-              <option :value="null">{{ t('uncategorized') }}</option>
-              <option v-for="cat in categories" :key="cat.id" :value="cat.id">
-                {{ locale === 'th' ? (cat.name_th || cat.name_en) : (cat.name_en || cat.name_th) }}
-              </option>
-            </select>
-          </div>
-
-          <!-- Original Name -->
-          <div class="form-group">
-            <label>{{ t('original_name') }}</label>
+            <label>{{ t('item_name') }}</label>
             <input
-              v-model="item.original_name"
+              v-model="item.display_name"
               type="text"
-              :placeholder="t('original_name')"
+              :placeholder="t('item_name')"
             />
-          </div>
-
-          <!-- English Name -->
-          <div class="form-group">
-            <label>{{ t('name_en') }}</label>
-            <input
-              v-model="item.name_en"
-              type="text"
-              :placeholder="t('name_en')"
-            />
-          </div>
-
-          <!-- Thai Name -->
-          <div class="form-group">
-            <label>{{ t('name_th') }}</label>
-            <input
-              v-model="item.name_th"
-              type="text"
-              :placeholder="t('name_th')"
-            />
+            <p v-if="itemErrors[index]?.name" class="field-error">{{ itemErrors[index].name }}</p>
           </div>
 
           <!-- Quantity -->
@@ -259,14 +202,10 @@
             <p v-if="itemErrors[index]?.quantity" class="field-error">{{ itemErrors[index].quantity }}</p>
           </div>
 
-          <!-- Unit -->
-          <div class="form-group">
+          <!-- Unit (hide if empty) -->
+          <div v-if="item.unit || alwaysShowOptional" class="form-group">
             <label>{{ t('unit') }}</label>
-            <input
-              v-model="item.unit"
-              type="text"
-              :placeholder="t('unit')"
-            />
+            <input v-model="item.unit" type="text" :placeholder="t('unit')" />
           </div>
 
           <!-- Unit Price -->
@@ -282,8 +221,8 @@
             <p v-if="itemErrors[index]?.unit_price" class="field-error">{{ itemErrors[index].unit_price }}</p>
           </div>
 
-          <!-- Discount -->
-          <div class="form-group">
+          <!-- Discount (hide if empty) -->
+          <div v-if="item.discount_amount || alwaysShowOptional" class="form-group">
             <label>{{ t('discount') }}</label>
             <input
               v-model="item.discount_amount"
@@ -314,20 +253,10 @@
 
     <!-- ── Actions ────────────────────────────────────────────────── -->
     <div class="form-actions">
-      <button
-        type="button"
-        class="btn btn-secondary"
-        style="width:auto;"
-        @click="emit('cancel')"
-      >
+      <button type="button" class="btn btn-secondary" style="width:auto;" @click="emit('cancel')">
         {{ t('cancel') }}
       </button>
-      <button
-        type="submit"
-        class="btn btn-primary"
-        style="width:auto;"
-        :disabled="isSubmitting"
-      >
+      <button type="submit" class="btn btn-primary" style="width:auto;" :disabled="isSubmitting">
         {{ isSubmitting ? t('saving') : submitLabel }}
       </button>
     </div>
@@ -336,12 +265,10 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Category } from '../types/category'
 import type { ExpenseFormData, ExpenseItemFormData } from '../types/expense'
-
-// ── Props and emits ───────────────────────────────────────────────────────────
 
 interface Props {
   initialData: ExpenseFormData
@@ -360,32 +287,103 @@ const emit = defineEmits<{
 
 const { t, locale } = useI18n()
 
-// ── Local form state — a deep copy so we don't mutate the parent's object ─────
+// Show extra optional fields (toggled by "show more" link)
+const alwaysShowOptional = ref(false)
 
 const form = reactive<ExpenseFormData>(deepCopy(props.initialData))
 
-// When the parent replaces initialData (e.g. after loading the expense on edit),
-// reset the local form to the new values.
+// ── Live-language item name logic ─────────────────────────────────────────────
+// Each item has name_th (original Thai), name_en (English translation, may be empty),
+// and original_name (raw text from receipt).
+//
+// display_name is the visible input:
+//   - locale=th  → show name_th  (the original, never overwrite)
+//   - locale=en  → show name_en if we have it, else show original_name as placeholder
+//
+// Cache rules:
+//   - name_th is the source of truth for Thai receipts — never overwrite it on locale switch
+//   - name_en is the English translation cache — only write to it when locale=en and user edits
+//   - Switching locale back to TH always restores the cached name_th
+
+// Flag to suppress the watch callback during programmatic locale-switch syncs
+let _syncingLocale = false
+
+function getDisplayName(item: ExpenseItemFormData): string {
+  if (locale.value === 'th') {
+    return item.name_th || item.original_name || item.name_en
+  }
+  // EN: if we have a cached English name use it, otherwise show the original (Thai) as fallback
+  return item.name_en || item.original_name || item.name_th
+}
+
+function syncDisplayNames(): void {
+  _syncingLocale = true
+  for (const item of form.items) {
+    item.display_name = getDisplayName(item)
+  }
+  // Allow the watch to settle before clearing the flag
+  setTimeout(() => { _syncingLocale = false }, 0)
+}
+
+// When locale changes, refresh display_name from cache — no AI call, no data loss
+watch(() => locale.value, () => syncDisplayNames())
+
+// When display_name is edited by the user, write back to the correct language slot
+watch(
+  () => form.items.map(i => i.display_name),
+  (newNames, oldNames) => {
+    if (_syncingLocale) return  // ignore programmatic syncs
+    for (let i = 0; i < form.items.length; i++) {
+      const item = form.items[i]
+      const newName = newNames[i] ?? ''
+      const oldName = oldNames?.[i] ?? ''
+      if (newName === oldName) continue  // nothing changed for this item
+
+      if (locale.value === 'th') {
+        // User editing in Thai — update Thai cache and original
+        item.name_th = newName
+        if (!item.original_name) item.original_name = newName
+      } else {
+        // User editing in English — only update English cache
+        item.name_en = newName
+        if (!item.original_name) item.original_name = newName
+      }
+    }
+  },
+)
+
 watch(
   () => props.initialData,
   (newData) => {
     Object.assign(form, deepCopy(newData))
+    syncDisplayNames()
+    // If AI filled optional fields, show them automatically
+    if (newData.tax_id || newData.subtotal || newData.tax_amount ||
+        newData.discount_amount || newData.category_name) {
+      alwaysShowOptional.value = true
+    }
   },
   { deep: true },
 )
 
 function deepCopy(data: ExpenseFormData): ExpenseFormData {
-  return {
+  const copy = {
     ...data,
-    items: data.items.map((item) => ({ ...item })),
+    items: data.items.map((item) => ({
+      ...item,
+      // Set display_name based on current locale — TH receipts show name_th by default
+      display_name: locale.value === 'th'
+        ? (item.name_th || item.original_name || item.name_en)
+        : (item.name_en || item.original_name || item.name_th),
+    })),
   }
+  return copy
 }
 
-// ── Validation errors ─────────────────────────────────────────────────────────
+// ── Validation ────────────────────────────────────────────────────────────────
 
 interface FormErrors {
-  category_id?: string
-  title?: string
+  receipt_date?: string
   currency?: string
   subtotal?: string
   tax_amount?: string
@@ -404,39 +402,26 @@ interface ItemErrors {
 const errors = reactive<FormErrors>({})
 const itemErrors = reactive<ItemErrors[]>([])
 
-// ── Decimal helpers ───────────────────────────────────────────────────────────
-
-// Returns true if the string is a valid non-negative decimal (or empty).
 function isNonNegativeDecimal(value: string): boolean {
   const trimmed = value.trim()
   if (trimmed === '') return true
   return /^\d+(\.\d+)?$/.test(trimmed) && parseFloat(trimmed) >= 0
 }
 
-// Returns true if the string is a valid positive decimal (> 0).
 function isPositiveDecimal(value: string): boolean {
   const trimmed = value.trim()
   if (trimmed === '') return false
   return /^\d+(\.\d+)?$/.test(trimmed) && parseFloat(trimmed) > 0
 }
 
-// ── Validate ──────────────────────────────────────────────────────────────────
-
 function validate(): boolean {
-  // Clear previous errors
   Object.keys(errors).forEach((k) => delete (errors as Record<string, unknown>)[k])
   itemErrors.splice(0, itemErrors.length)
 
   let valid = true
 
-  // Main fields
-  if (!form.category_id) {
-    errors.category_id = t('category_required')
-    valid = false
-  }
-
-  if (!form.title.trim()) {
-    errors.title = t('title_required')
+  if (!form.receipt_date) {
+    errors.receipt_date = t('error_required')
     valid = false
   }
 
@@ -457,32 +442,28 @@ function validate(): boolean {
     errors.subtotal = t('invalid_amount')
     valid = false
   }
-
   if (form.tax_amount.trim() && !isNonNegativeDecimal(form.tax_amount)) {
     errors.tax_amount = t('invalid_amount')
     valid = false
   }
-
   if (form.discount_amount.trim() && !isNonNegativeDecimal(form.discount_amount)) {
     errors.discount_amount = t('invalid_amount')
     valid = false
   }
 
-  // Item fields
   for (let i = 0; i < form.items.length; i++) {
     const item = form.items[i]
     const itemErr: ItemErrors = {}
     let itemValid = true
 
-    // At least one name required
-    const hasName =
+    // display_name is the visible field; also check underlying name fields
+    const hasName = (item.display_name || '').trim() ||
       item.original_name.trim() || item.name_en.trim() || item.name_th.trim()
     if (!hasName) {
       itemErr.name = t('item_name_required')
       itemValid = false
     }
 
-    // Quantity must be a positive number
     if (!isPositiveDecimal(item.quantity)) {
       itemErr.quantity = t('invalid_amount')
       itemValid = false
@@ -492,12 +473,10 @@ function validate(): boolean {
       itemErr.unit_price = t('invalid_amount')
       itemValid = false
     }
-
     if (item.discount_amount.trim() && !isNonNegativeDecimal(item.discount_amount)) {
       itemErr.discount_amount = t('invalid_amount')
       itemValid = false
     }
-
     if (item.total_price.trim() && !isNonNegativeDecimal(item.total_price)) {
       itemErr.total_price = t('invalid_amount')
       itemValid = false
@@ -510,7 +489,7 @@ function validate(): boolean {
   return valid
 }
 
-// ── Item management ───────────────────────────────────────────────────────────
+// ── Items ─────────────────────────────────────────────────────────────────────
 
 function makeEmptyItem(): ExpenseItemFormData {
   return {
@@ -518,6 +497,7 @@ function makeEmptyItem(): ExpenseItemFormData {
     original_name: '',
     name_en: '',
     name_th: '',
+    display_name: '',
     quantity: '',
     unit: '',
     unit_price: '',
@@ -526,10 +506,7 @@ function makeEmptyItem(): ExpenseItemFormData {
   }
 }
 
-function addItem(): void {
-  form.items.push(makeEmptyItem())
-}
-
+function addItem(): void { form.items.push(makeEmptyItem()) }
 function removeItem(index: number): void {
   form.items.splice(index, 1)
   itemErrors.splice(index, 1)
@@ -539,10 +516,21 @@ function removeItem(index: number): void {
 
 function handleSubmit(): void {
   if (!validate()) return
-  // Emit a plain copy — the parent builds the actual API request
   emit('submit', deepCopy(form))
 }
 
-// Expose submitForm so parent views can programmatically trigger validation + submit.
 defineExpose({ submitForm: handleSubmit })
 </script>
+
+<style scoped>
+.btn-text-link {
+  background: none;
+  border: none;
+  color: #4a6cf7;
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+.btn-text-link:hover { color: #2a4cd7; }
+</style>

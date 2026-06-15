@@ -61,7 +61,7 @@ def upload_receipt(
     stored_filename = generate_stored_filename(original_filename)
 
     # Step 3 – save to disk
-    file_path = save_receipt_file(file_bytes, stored_filename, settings.UPLOAD_DIR)
+    file_path = save_receipt_file(file_bytes, stored_filename, str(settings.upload_dir_absolute))
 
     # Steps 4-5 – DB record; clean up file on failure
     try:
@@ -132,7 +132,11 @@ def delete_user_receipt(db: Session, user_id: int, receipt_id: int) -> bool:
 
 def _find_category_by_name(db: Session, name: str | None) -> int | None:
     """Return the id of an active, non-deleted category whose name_en or name_th
-    matches the given string (case-insensitive), or None if no match is found.
+    matches the given string (case-insensitive).
+
+    Matching strategy (tried in order, first match wins):
+    1. Exact match  — "Food & Drink" == "food & drink"
+    2. Contains     — category name contains the search term, or vice-versa
     Does not create categories automatically.
     """
     if not name or not name.strip():
@@ -140,7 +144,7 @@ def _find_category_by_name(db: Session, name: str | None) -> int | None:
 
     search = name.strip().lower()
 
-    category = (
+    categories = (
         db.query(Category)
         .filter(
             Category.is_active == True,
@@ -149,8 +153,18 @@ def _find_category_by_name(db: Session, name: str | None) -> int | None:
         .all()
     )
 
-    for cat in category:
-        if cat.name_en.lower() == search or cat.name_th.lower() == search:
+    # Pass 1: exact match
+    for cat in categories:
+        name_en = (cat.name_en or "").lower()
+        name_th = (cat.name_th or "").lower()
+        if name_en == search or name_th == search:
+            return cat.id
+
+    # Pass 2: partial/contains match (handles "food" → "Food & Drink")
+    for cat in categories:
+        name_en = (cat.name_en or "").lower()
+        name_th = (cat.name_th or "").lower()
+        if search in name_en or name_en in search or search in name_th or name_th in search:
             return cat.id
 
     return None
@@ -202,31 +216,25 @@ def extract_receipt_to_draft_expense(
     if not file_path.is_file():
         raise ReceiptServiceError("Receipt file not found", status_code=404)
 
-    # 4. Call Gemini — GeminiServiceError is allowed to propagate unchanged.
+    # 4. Call AI — GeminiServiceError is allowed to propagate unchanged.
     extracted = extract_receipt_data(file_path, receipt.mime_type)
 
-    # 5. Simple category matching (case-insensitive, active only).
-    expense_category_id = _find_category_by_name(db, None)  # no main category field in schema
-    # Note: ExtractedReceiptData has no top-level category_name field.
-    # Each item has category_name; the expense category remains None.
+    # 5. Category matching — use the top-level category_name AI returned.
+    expense_category_id = _find_category_by_name(db, extracted.category_name)
 
-    # 6. Build the title (fallback chain: title → merchant_name → "Extracted Receipt").
-    title = (
-        extracted.title
-        or extracted.merchant_name
-        or "Extracted Receipt"
-    )
+    # 6. Build paid_to: prefer explicit paid_to, fall back to merchant_name.
+    paid_to = extracted.paid_to or extracted.merchant_name
 
-    # 7. Determine receipt_date — use today if Gemini didn't return one.
+    # 7. Determine receipt_date — use the date from the receipt, not today.
     receipt_date = extracted.receipt_date or date.today()
 
     try:
         # 8. Create the Expense.
         expense = Expense(
             user_id=user_id,
-            category_id=expense_category_id,  # None when no match
-            title=title,
-            merchant_name=extracted.merchant_name,
+            category_id=expense_category_id,
+            paid_to=paid_to,
+            tax_id=extracted.tax_id,
             receipt_number=extracted.receipt_number,
             receipt_date=receipt_date,
             receipt_time=extracted.receipt_time,
@@ -285,15 +293,27 @@ def extract_receipt_to_draft_expense(
             db.refresh(item)
 
         # 13. Build the response while the session is still open.
+        # Also look up the category name to send back to the frontend.
+        category_name: str | None = None
+        if expense.category_id:
+            cat = db.query(Category).filter(Category.id == expense.category_id).first()
+            if cat:
+                category_name = cat.name_en
+        # Fallback: if no DB match, still send the AI-guessed name so the form pre-fills
+        if not category_name and extracted.category_name:
+            category_name = extracted.category_name
+
         item_responses = [ExpenseItemResponse.model_validate(item) for item in created_items]
         return ExpenseResponse(
             id=expense.id,
             user_id=expense.user_id,
             category_id=expense.category_id,
-            title=expense.title,
-            merchant_name=expense.merchant_name,
+            category_name=category_name,
+            paid_to=expense.paid_to,
+            tax_id=expense.tax_id,
             receipt_number=expense.receipt_number,
             receipt_date=expense.receipt_date,
+            receipt_time=expense.receipt_time,
             payment_method=expense.payment_method,
             currency=expense.currency,
             subtotal=expense.subtotal,
