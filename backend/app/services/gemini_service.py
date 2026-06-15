@@ -127,10 +127,8 @@ def _parse_time(text: str) -> time | None:
 # ── Money helpers ─────────────────────────────────────────────────────────────
 
 _MONEY_RE = re.compile(r"(\d[\d,]*\.?\d*)")
-_TOTAL_LINE_RE = re.compile(
-    r"(?:total|รวม|ยอดรวม|ยอดชำระ|amount\s*due)[^\d]*(\d[\d,]*\.?\d*)",
-    re.IGNORECASE,
-)
+# Stricter pattern: requires exactly 2 decimal places (real money amounts)
+_AMOUNT_RE = re.compile(r"(\d[\d,]*\.\d{2})")
 
 
 def _to_decimal(s: str) -> Decimal | None:
@@ -143,20 +141,46 @@ def _to_decimal(s: str) -> Decimal | None:
 
 
 def _find_total(text: str) -> Decimal | None:
-    """Find the final total amount. Prefer explicit 'total' lines."""
-    m = _TOTAL_LINE_RE.search(text)
-    if m:
-        d = _to_decimal(m.group(1))
-        if d and d > 0:
-            return d
-    # Fallback: find the largest monetary value on a line that looks like a total
-    best: Decimal | None = None
+    """Find the final total amount from OCR text.
+
+    Strategy (priority order):
+    1. Lines with total-keywords AND a properly formatted amount (XX.XX).
+       Takes the LAST number on the line to avoid capturing item counts.
+       Skips "ITEMS :" lines.
+    2. Largest amount-formatted number (XX.XX) on any total-keyword line.
+    3. Largest amount-formatted number in the whole document (capped at 999999.99).
+    """
+    _TOTAL_KW_RE = re.compile(
+        r"(?:total|รวม|ยอดรวม|ยอดชำระ|amount\s*due)",
+        re.IGNORECASE,
+    )
+    _SKIP_ITEMS_RE = re.compile(r"\bitems?\s*:", re.IGNORECASE)
+
+    candidates: list[Decimal] = []
+
     for line in text.splitlines():
-        if re.search(r"total|รวม|ยอดรวม|ยอดชำระ", line, re.IGNORECASE):
-            for num_m in _MONEY_RE.finditer(line):
-                d = _to_decimal(num_m.group(1))
-                if d and (best is None or d > best):
-                    best = d
+        if not _TOTAL_KW_RE.search(line):
+            continue
+        if _SKIP_ITEMS_RE.search(line):
+            continue
+        # Only look for properly formatted money amounts (require decimal point)
+        amounts = _AMOUNT_RE.findall(line)
+        if amounts:
+            # Take the last (rightmost) — that's the total, not a qty or item count
+            d = _to_decimal(amounts[-1])
+            if d and d > 0:
+                candidates.append(d)
+
+    if candidates:
+        return max(candidates)
+
+    # Fallback: largest properly-formatted amount in the whole text, capped at 999999.99
+    best: Decimal | None = None
+    for m in _AMOUNT_RE.finditer(text):
+        d = _to_decimal(m.group(1))
+        if d and d > 0 and d <= Decimal("999999.99"):
+            if best is None or d > best:
+                best = d
     return best
 
 
@@ -228,7 +252,14 @@ def _find_payment_method(text: str) -> str | None:
 # ── Item parser ───────────────────────────────────────────────────────────────
 
 _ITEM_LINE_RE = re.compile(
-    r"^(\d+)\s+(.+?)\s+(\d[\d,]*\.\d{2})$"
+    # qty  <optional code like (A01)>  name  price
+    # Allows: "1  ซูชิกุ้ง  11.00" or "2  (A21) ซูชิแซลมอน  38.00"
+    r"^(\d{1,3})\s+(.+?)\s{2,}(\d[\d,]*\.?\d*)$"
+)
+
+# Broader fallback: qty + name + price with at least one space separator
+_ITEM_LINE_RE_LAX = re.compile(
+    r"^(\d{1,3})\s+(.+?)\s+(\d[\d,]*\.\d{2})$"
 )
 
 
@@ -238,29 +269,58 @@ def _parse_items(text: str) -> list[ExtractedReceiptItem]:
     Handles lines like:
       1  ซูชิกุ้ง  39.00
       2  (A21) ซูชิแซลมอน  38.00
+      1  Zuwai and Kani Miso Hand R...  49.00
+
+    Strategy: try strict 2-space separator regex first, then fall back to
+    the looser single-space version. Skip summary and header lines.
     """
+    # Lines to skip — these are summary/header rows, not items
+    _SKIP_RE = re.compile(
+        r"(?:total|subtotal|vat|tax|discount|รวม|ยอด|items?\s*:|receipt|invoice|"
+        r"cashier|table|date|time|pos\s*id|ref\.|promptpay|edc|ขอบคุณ|รวมภาษี)",
+        re.IGNORECASE,
+    )
+
     items: list[ExtractedReceiptItem] = []
+    seen_names: set[str] = set()
+
     for line in text.splitlines():
         line = line.strip()
-        m = _ITEM_LINE_RE.match(line)
+        if not line:
+            continue
+        if _SKIP_RE.search(line):
+            continue
+
+        # Try strict (2+ spaces between fields) then lax
+        m = _ITEM_LINE_RE.match(line) or _ITEM_LINE_RE_LAX.match(line)
         if not m:
             continue
+
         qty_str, name_raw, price_str = m.group(1), m.group(2).strip(), m.group(3)
-        # Skip summary lines
-        if re.search(r"total|subtotal|vat|discount|รวม|ยอด|item", name_raw, re.IGNORECASE):
+
+        # Skip if name is empty or just digits/punctuation
+        if not name_raw or re.match(r'^[\d\s\.\-/]+$', name_raw):
             continue
-        # Skip quantity > 20 (likely address number or code, not qty)
+        if len(name_raw) < 2:
+            continue
+
+        # Skip duplicate items (same name seen twice — likely header repeat)
+        name_key = name_raw.lower()
+        if name_key in seen_names:
+            continue
+        seen_names.add(name_key)
+
+        # Validate quantity (1–99 is reasonable for a receipt)
         try:
             qty_val = int(qty_str)
-            if qty_val > 20:
+            if qty_val < 1 or qty_val > 99:
                 continue
         except ValueError:
             continue
-        # Skip if name is just digits or very short
-        if re.match(r"^\d+$", name_raw) or len(name_raw) < 2:
-            continue
+
         qty = _to_decimal(qty_str) or Decimal("1")
         price = _to_decimal(price_str) or Decimal("0")
+
         items.append(
             ExtractedReceiptItem(
                 original_name=name_raw,

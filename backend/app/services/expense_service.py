@@ -67,6 +67,7 @@ def create_expense(db: Session, user_id: int, data: ExpenseCreate) -> ExpenseRes
             total_amount=data.total_amount,
             notes=data.notes,
             input_method="manual",
+            is_confirmed=True,
         )
 
         # 4. Flush to get expense.id without committing yet
@@ -702,23 +703,17 @@ def confirm_user_expense(
     if expense is None:
         raise ExpenseServiceError("Expense not found", status_code=404)
 
-    # 2. Must be an AI-extracted expense
-    if expense.input_method != "ai":
-        raise ExpenseServiceError(
-            "Only AI-extracted expenses can be confirmed", status_code=409
-        )
-
-    # 3. Already confirmed
+    # 2. Already confirmed
     if expense.is_confirmed:
         raise ExpenseServiceError("Expense is already confirmed", status_code=409)
 
-    # 4. category_id must be set before confirming
+    # 3. category_id must be set before confirming
     if expense.category_id is None:
         raise ExpenseServiceError(
             "Please select a category before confirming", status_code=422
         )
 
-    # 5. Category must exist, be active, and not be soft-deleted
+    # 4. Category must exist, be active, and not be soft-deleted
     category = (
         db.query(Category)
         .filter(
@@ -733,7 +728,7 @@ def confirm_user_expense(
             "A valid expense category is required before confirmation", status_code=422
         )
 
-    # 6. total_amount must be set and zero or greater
+    # 5. total_amount must be set and zero or greater
     if expense.total_amount is None:
         raise ExpenseServiceError(
             "Expense total amount is required before confirmation", status_code=422
@@ -744,6 +739,7 @@ def confirm_user_expense(
         )
 
     # All checks passed — confirm in one transaction
+
     try:
         expense.is_confirmed = True
         db.commit()

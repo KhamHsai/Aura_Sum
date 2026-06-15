@@ -30,7 +30,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '../layouts/AppLayout.vue'
 import ExpenseForm from '../components/ExpenseForm.vue'
-import { getCategories } from '../api/categoryApi'
+import { getCategories, createCategory } from '../api/categoryApi'
 import { createExpense } from '../api/expenseApi'
 import { showSuccessAlert, showErrorAlert } from '../utils/alerts'
 import type { Category } from '../types/category'
@@ -81,26 +81,32 @@ async function loadCategories(): Promise<void> {
   }
 }
 
-// Resolve category_name text → category_id (case-insensitive, partial match)
-function resolveCategoryId(name: string): number | null {
+/**
+ * Resolve category_name to an id.
+ * 1. Exact match (case-insensitive) against loaded categories → use existing id.
+ * 2. No match → create a new category on the backend and use the returned id.
+ * 3. Empty string → null (no category).
+ */
+async function resolveCategoryId(name: string): Promise<number | null> {
   const search = name.trim().toLowerCase()
   if (!search) return null
-  // Exact match first
-  let found = categories.value.find(
+
+  const found = categories.value.find(
     c => c.name_en.toLowerCase() === search || c.name_th.toLowerCase() === search
   )
-  // Partial match fallback
-  if (!found) {
-    found = categories.value.find(
-      c => c.name_en.toLowerCase().includes(search) || search.includes(c.name_en.toLowerCase()) ||
-           c.name_th.toLowerCase().includes(search) || search.includes(c.name_th.toLowerCase())
-    )
+  if (found) return found.id
+
+  // Not found — create it
+  const created = await createCategory(name.trim())
+  // Add to local list so subsequent lookups within the same session hit the cache
+  if (!categories.value.find(c => c.id === created.id)) {
+    categories.value.push(created)
   }
-  return found?.id ?? null
+  return created.id
 }
 
 // Convert the form data to the exact shape the backend expects
-function buildRequest(form: ExpenseFormData): ExpenseCreateRequest {
+async function buildRequest(form: ExpenseFormData): Promise<ExpenseCreateRequest> {
   const items: ExpenseItemCreateRequest[] = form.items.map((item) => ({
     original_name: item.original_name.trim() || item.name_th.trim() || item.display_name.trim() || item.name_en.trim(),
     name_en: item.name_en.trim() || null,
@@ -114,7 +120,7 @@ function buildRequest(form: ExpenseFormData): ExpenseCreateRequest {
   }))
 
   return {
-    category_id: resolveCategoryId(form.category_name),
+    category_id: await resolveCategoryId(form.category_name),
     paid_to: form.paid_to.trim() || null,
     tax_id: form.tax_id.trim() || null,
     receipt_number: form.receipt_number.trim() || null,
@@ -150,10 +156,10 @@ async function handleSubmit(form: ExpenseFormData): Promise<void> {
   backendError.value = null
 
   try {
-    const request = buildRequest(form)
+    const request = await buildRequest(form)
     const created = await createExpense(request)
     await showSuccessAlert(t('expense_created'), t('expense_created_message'))
-    router.push({ name: 'expense-detail', params: { id: created.id } })
+    router.push({ name: 'expenses' })
   } catch (err: unknown) {
     const response = (err as { response?: { status?: number } })?.response
     backendError.value = parseBackendError(err)

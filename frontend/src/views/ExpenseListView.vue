@@ -63,12 +63,6 @@
                     : t('uncategorized')
                 }}
               </span>
-              <span
-                class="badge"
-                :class="expense.is_confirmed ? 'badge-confirmed' : 'badge-draft'"
-              >
-                {{ expense.is_confirmed ? t('confirmed') : t('draft') }}
-              </span>
             </div>
           </div>
         </div>

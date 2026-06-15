@@ -26,29 +26,15 @@
       </div>
 
       <ExpenseForm
-        ref="expenseFormRef"
         :initial-data="initialForm"
         :categories="categories"
         :loading-categories="loadingCategories"
         :is-submitting="isSubmitting"
-        :submit-label="isConfirming ? t('confirming') : t('update_expense')"
+        :submit-label="t('update_expense')"
         :backend-error="backendError"
         @submit="handleSubmit"
         @cancel="router.push({ name: 'expense-detail', params: { id: expenseId } })"
-      >
-        <template #extra-actions>
-          <button
-            v-if="loadedExpense && !loadedExpense.is_confirmed"
-            type="button"
-            class="btn btn-primary"
-            style="width:auto; padding: 0.85rem 1.5rem;"
-            :disabled="isSubmitting || isConfirming"
-            @click="handleConfirmClick"
-          >
-            {{ isConfirming ? t('confirming') : t('confirm_expense') }}
-          </button>
-        </template>
-      </ExpenseForm>
+      />
     </template>
   </AppLayout>
 </template>
@@ -59,9 +45,9 @@ import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '../layouts/AppLayout.vue'
 import ExpenseForm from '../components/ExpenseForm.vue'
-import { getCategories } from '../api/categoryApi'
-import { getExpenseById, updateExpense, confirmExpense } from '../api/expenseApi'
-import { showSuccessAlert, showErrorAlert, showDeleteConfirmation } from '../utils/alerts'
+import { getCategories, createCategory } from '../api/categoryApi'
+import { getExpenseById, updateExpense } from '../api/expenseApi'
+import { showSuccessAlert, showErrorAlert } from '../utils/alerts'
 import type { Category } from '../types/category'
 import type {
   Expense,
@@ -78,18 +64,10 @@ const categories = ref<Category[]>([])
 const loadingCategories = ref(false)
 const isLoading = ref(false)
 const isSubmitting = ref(false)
-const isConfirming = ref(false)
-// Tracks whether the next form submit should trigger save+confirm.
-const confirmPending = ref(false)
-// Holds the loaded expense so we can check is_confirmed after load.
-const loadedExpense = ref<Expense | null>(null)
 const notFound = ref(false)
 const loadError = ref<string | null>(null)
 const backendError = ref<string | null>(null)
 let expenseId = 0
-
-// Template ref to the ExpenseForm component's root form element
-const expenseFormRef = ref<InstanceType<typeof ExpenseForm> | null>(null)
 
 // Reactive initial data for the form — starts empty, filled after load
 const initialForm = ref<ExpenseFormData>(emptyForm())
@@ -114,17 +92,9 @@ function emptyForm(): ExpenseFormData {
 }
 
 function expenseToForm(expense: Expense): ExpenseFormData {
-  // Use category_name from response if present (AI extraction sends it back),
-  // otherwise resolve from categories list by id.
-  let catName = expense.category_name ?? ''
-  if (!catName && expense.category_id) {
-    const cat = categories.value.find(c => c.id === expense.category_id)
-    catName = cat ? (cat.name_en || cat.name_th) : ''
-  }
   return {
     category_id: expense.category_id,
-    category_name: catName,
-    paid_to: expense.paid_to ?? '',
+    category_name: expense.category_name ?? '',    paid_to: expense.paid_to ?? '',
     tax_id: expense.tax_id ?? '',
     receipt_number: expense.receipt_number ?? '',
     receipt_date: expense.receipt_date,
@@ -153,24 +123,30 @@ function expenseToForm(expense: Expense): ExpenseFormData {
   }
 }
 
-// Resolve category_name text → category_id (case-insensitive, partial match)
-function resolveCategoryId(name: string): number | null {
+/**
+ * Resolve category_name to an id.
+ * 1. Exact match (case-insensitive) against loaded categories → use existing id.
+ * 2. No match → create a new category on the backend and use the returned id.
+ * 3. Empty string → null (no category).
+ */
+async function resolveCategoryId(name: string): Promise<number | null> {
   const search = name.trim().toLowerCase()
   if (!search) return null
-  let found = categories.value.find(
+
+  const found = categories.value.find(
     c => c.name_en.toLowerCase() === search || c.name_th.toLowerCase() === search
   )
-  if (!found) {
-    found = categories.value.find(
-      c => c.name_en.toLowerCase().includes(search) || search.includes(c.name_en.toLowerCase()) ||
-           c.name_th.toLowerCase().includes(search) || search.includes(c.name_th.toLowerCase())
-    )
+  if (found) return found.id
+
+  const created = await createCategory(name.trim())
+  if (!categories.value.find(c => c.id === created.id)) {
+    categories.value.push(created)
   }
-  return found?.id ?? null
+  return created.id
 }
 
 // Build the PUT request payload — always include all items (full replacement)
-function buildRequest(form: ExpenseFormData): ExpenseUpdateRequest {
+async function buildRequest(form: ExpenseFormData): Promise<ExpenseUpdateRequest> {
   const items: ExpenseItemCreateRequest[] = form.items.map((item) => ({
     original_name: item.original_name.trim() || item.name_th.trim() || item.display_name.trim() || item.name_en.trim(),
     name_en: item.name_en.trim() || null,
@@ -183,11 +159,8 @@ function buildRequest(form: ExpenseFormData): ExpenseUpdateRequest {
     category_id: item.category_id,
   }))
 
-  // Always resolve from the visible text field — that's what the user edited
-  const resolvedCategoryId = resolveCategoryId(form.category_name)
-
   return {
-    category_id: resolvedCategoryId,
+    category_id: await resolveCategoryId(form.category_name),
     paid_to: form.paid_to.trim() || null,
     tax_id: form.tax_id.trim() || null,
     receipt_number: form.receipt_number.trim() || null,
@@ -237,7 +210,6 @@ async function loadData(): Promise<void> {
     ])
     categories.value = cats
     initialForm.value = expenseToForm(expense)
-    loadedExpense.value = expense
   } catch (err: unknown) {
     const status = (err as { response?: { status?: number } })?.response?.status
     if (status === 404) {
@@ -252,48 +224,15 @@ async function loadData(): Promise<void> {
 }
 
 // Called by ExpenseForm when it validates successfully and emits 'submit'.
-// When confirmPending is true, save first then confirm.
 async function handleSubmit(form: ExpenseFormData): Promise<void> {
-  const shouldConfirm = confirmPending.value
-  confirmPending.value = false
-
   isSubmitting.value = true
   backendError.value = null
 
-  if (shouldConfirm) {
-    isConfirming.value = true
-  }
-
   try {
-    const request = buildRequest(form)
+    const request = await buildRequest(form)
     await updateExpense(expenseId, request)
-
-    if (!shouldConfirm) {
-      // Normal save — show success and go to detail
-      await showSuccessAlert(t('expense_updated'), t('expense_updated_message'))
-      router.push({ name: 'expense-detail', params: { id: expenseId } })
-      return
-    }
-
-    // Save succeeded — now confirm
-    try {
-      await confirmExpense(expenseId)
-      await showSuccessAlert(t('expense_confirmed'), t('expense_confirmed_message'))
-      router.push({ name: 'expense-detail', params: { id: expenseId } })
-    } catch (confirmErr: unknown) {
-      // Save succeeded but confirm failed — stay on page and show error
-      const status = (confirmErr as { response?: { status?: number; data?: { detail?: string } } })?.response?.status
-      const detail = (confirmErr as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      if (status === 409) {
-        const msg = typeof detail === 'string' ? detail : t('already_confirmed')
-        await showErrorAlert(t('unable_to_confirm_expense'), msg)
-      } else if (status === 422) {
-        const msg = typeof detail === 'string' ? detail : t('incomplete_expense')
-        await showErrorAlert(t('unable_to_confirm_expense'), msg)
-      } else {
-        await showErrorAlert(t('unable_to_confirm_expense'), t('please_review_and_try_again'))
-      }
-    }
+    await showSuccessAlert(t('expense_updated'), t('expense_updated_message'))
+    router.push({ name: 'expenses' })
   } catch (err: unknown) {
     const response = (err as { response?: { status?: number } })?.response
     backendError.value = parseBackendError(err)
@@ -302,34 +241,6 @@ async function handleSubmit(form: ExpenseFormData): Promise<void> {
     }
   } finally {
     isSubmitting.value = false
-    isConfirming.value = false
-  }
-}
-
-// Called by the "Confirm Expense" button below the form.
-// Shows SweetAlert2 dialog first, then sets confirmPending and programmatically
-// submits the form to trigger its own validation before saving+confirming.
-async function handleConfirmClick(): Promise<void> {
-  if (isSubmitting.value || isConfirming.value) return
-
-  const result = await showDeleteConfirmation({
-    title: t('confirm_expense_title'),
-    text: t('confirm_expense_message'),
-    confirmButtonText: t('confirm_expense'),
-    cancelButtonText: t('cancel'),
-  })
-
-  if (!result.isConfirmed) return
-
-  // Flag the next handleSubmit call to also confirm after saving
-  confirmPending.value = true
-
-  // Trigger the form's own validation + submit via its exposed submitForm method
-  if (expenseFormRef.value) {
-    expenseFormRef.value.submitForm()
-  } else {
-    // Fallback — should not happen in normal usage
-    confirmPending.value = false
   }
 }
 

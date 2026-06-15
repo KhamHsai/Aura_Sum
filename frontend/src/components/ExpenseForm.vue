@@ -12,7 +12,7 @@
 
       <div class="form-grid">
 
-        <!-- Category (manual text entry — user types the category name) -->
+        <!-- Category (manual text entry with autocomplete suggestions) -->
         <div class="form-group">
           <label for="ef-category">{{ t('category') }}</label>
           <input
@@ -21,8 +21,8 @@
             type="text"
             :placeholder="t('category_placeholder')"
             list="ef-category-suggestions"
+            autocomplete="off"
           />
-          <!-- Datalist gives soft autocomplete without forcing a choice -->
           <datalist id="ef-category-suggestions">
             <option v-for="cat in categories" :key="cat.id"
               :value="locale === 'th' ? (cat.name_th || cat.name_en) : (cat.name_en || cat.name_th)" />

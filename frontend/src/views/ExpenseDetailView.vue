@@ -41,22 +41,6 @@
             <div style="font-size:1.8rem; font-weight:800; color:var(--color-brand-primary); font-family:var(--font-brand);">
               {{ formatMoney(expense.total_amount, expense.currency) }}
             </div>
-            <span
-              class="badge"
-              :class="expense.is_confirmed ? 'badge-confirmed' : 'badge-draft'"
-            >
-              {{ expense.is_confirmed ? t('confirmed') : t('draft') }}
-            </span>
-            <div class="detail-actions" style="margin-top:0.75rem;">
-              <button
-                v-if="!expense.is_confirmed"
-                class="btn btn-confirm"
-                :disabled="isConfirming"
-                @click="handleConfirm"
-              >
-                {{ isConfirming ? t('confirming') : t('confirm_expense') }}
-              </button>
-            </div>
           </div>
         </div>
 
@@ -159,7 +143,7 @@ import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '../layouts/AppLayout.vue'
-import { getExpenseById, deleteExpense, confirmExpense, translateExpense } from '../api/expenseApi'
+import { getExpenseById, deleteExpense, translateExpense } from '../api/expenseApi'
 import { showDeleteConfirmation, showSuccessAlert, showErrorAlert } from '../utils/alerts'
 import { formatMoney, formatDate, formatDateTime } from '../utils/formatters'
 import type { Expense, ExpenseItem } from '../types/expense'
@@ -172,7 +156,6 @@ const router = useRouter()
 const expense = ref<Expense | null>(null)
 const isLoading = ref(false)
 const isDeleting = ref(false)
-const isConfirming = ref(false)
 const error = ref<string | null>(null)
 const notFound = ref(false)
 
@@ -242,43 +225,6 @@ async function handleTranslate(): Promise<void> {
     await showErrorAlert(t('unable_to_translate_expense'), translationError.value)
   } finally {
     isTranslating.value = false
-  }
-}
-
-async function handleConfirm(): Promise<void> {
-  if (!expense.value || isConfirming.value) return
-
-  const result = await showDeleteConfirmation({
-    title: t('confirm_expense_title'),
-    text: t('confirm_expense_message'),
-    confirmButtonText: t('confirm_expense'),
-    cancelButtonText: t('cancel'),
-  })
-
-  if (!result.isConfirmed) return
-
-  isConfirming.value = true
-
-  try {
-    const updated = await confirmExpense(expense.value.id)
-    expense.value = updated
-    await showSuccessAlert(t('expense_confirmed'), t('expense_confirmed_message'))
-  } catch (err: unknown) {
-    const status = (err as { response?: { status?: number; data?: { detail?: string } } })?.response?.status
-    const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-    if (status === 409) {
-      const msg = typeof detail === 'string' ? detail : t('already_confirmed')
-      await showErrorAlert(t('unable_to_confirm_expense'), msg)
-    } else if (status === 422) {
-      const msg = typeof detail === 'string' ? detail : t('incomplete_expense')
-      await showErrorAlert(t('unable_to_confirm_expense'), msg)
-    } else if (status === 404) {
-      await showErrorAlert(t('expense_not_found'))
-    } else {
-      await showErrorAlert(t('unable_to_confirm_expense'), t('please_review_and_try_again'))
-    }
-  } finally {
-    isConfirming.value = false
   }
 }
 
