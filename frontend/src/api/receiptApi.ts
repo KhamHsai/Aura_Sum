@@ -23,11 +23,11 @@ export async function uploadReceipt(
   const formData = new FormData()
   formData.append('file', file)
 
+  // Delete the instance-level 'application/json' default so axios can auto-set
+  // 'multipart/form-data; boundary=...' correctly when it detects FormData.
   const response = await apiClient.post<Receipt>('/receipts/upload', formData, {
     headers: {
-      // Let the browser set the correct multipart boundary automatically.
-      // Do NOT manually set 'Content-Type': 'multipart/form-data' here.
-      'Content-Type': 'multipart/form-data',
+      'Content-Type': undefined,
     },
     onUploadProgress: onUploadProgress
       ? (progressEvent) => {

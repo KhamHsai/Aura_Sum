@@ -9,8 +9,9 @@ class Expense(Base):
     id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
     user_id = Column(BIGINT(unsigned=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
     category_id = Column(INT(unsigned=True), ForeignKey("categories.id", ondelete="RESTRICT"), nullable=True, index=True)
-    title = Column(String(255), nullable=False)
-    merchant_name = Column(String(255), nullable=True)
+    title = Column(String(255), nullable=True)
+    paid_to = Column(String(255), nullable=True)          # replaces merchant_name
+    tax_id = Column(String(50), nullable=True)             # new: tax ID from receipt
     receipt_number = Column(String(100), nullable=True)
     receipt_date = Column(Date, nullable=False, index=True)
     receipt_time = Column(Time, nullable=True)

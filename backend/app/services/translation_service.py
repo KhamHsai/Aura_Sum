@@ -15,7 +15,7 @@ import re
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-import google.genai as genai
+from openai import OpenAI
 
 from app.config import settings
 from app.models.expense import Expense
@@ -44,18 +44,21 @@ class TranslationServiceError(Exception):
 
 # ── Gemini client ──────────────────────────────────────────────────────────────
 
-def _build_translation_client() -> genai.Client:
-    """Build a Gemini client for translation.
+def _build_translation_client() -> OpenAI:
+    """Build an OpenRouter client for translation.
 
-    Kept separate from the extraction client so tests can patch it independently.
+    Keeps the same function name so tests can patch it independently.
     Raises TranslationServiceError when the API key is missing.
     """
-    api_key = settings.GEMINI_API_KEY
+    api_key = settings.OPENROUTER_API_KEY
     if not api_key:
         raise TranslationServiceError(
-            "Gemini API key is not configured", status_code=503
+            "OpenRouter API key is not configured", status_code=503
         )
-    return genai.Client(api_key=api_key)
+    return OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+    )
 
 
 # ── Gemini translation call ────────────────────────────────────────────────────
@@ -138,16 +141,18 @@ Return exactly this JSON structure:
 }}"""
 
     try:
-        response = client.models.generate_content(
-            model=settings.GEMINI_MODEL,
-            contents=prompt,
+        response = client.chat.completions.create(
+            model=settings.OPENROUTER_MODEL,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
         )
     except TranslationServiceError:
         raise
     except Exception as exc:
-        raise TranslationServiceError("Gemini translation failed", status_code=502) from exc
+        raise TranslationServiceError("AI translation failed", status_code=502) from exc
 
-    response_text = response.text if hasattr(response, "text") else None
+    response_text = response.choices[0].message.content if response.choices else None
     if not response_text or not response_text.strip():
         raise TranslationServiceError(
             "Gemini returned an empty response", status_code=502

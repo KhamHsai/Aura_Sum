@@ -92,9 +92,9 @@
             class="recent-expense-row"
           >
             <div class="recent-expense-info">
-              <div class="recent-expense-title">{{ expense.title }}</div>
+              <div class="recent-expense-title">{{ expense.paid_to ?? t('not_available') }}</div>
               <div class="recent-expense-meta">
-                <span>{{ expense.merchant_name ?? t('not_available') }}</span>
+                <span>{{ formatMoney(expense.total_amount, expense.currency) }}</span>
                 <span>{{ formatDate(expense.receipt_date) }}</span>
                 <span
                   class="badge"
