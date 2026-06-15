@@ -1,231 +1,65 @@
-# Smart Receipt
+# Aura Sum — Smart Receipt & Expense Tracker
 
-An AI-powered receipt and expense management application. Upload receipts, extract data with Google Gemini, manage expenses, translate between English and Thai, and export to Excel.
+## Objective
 
-## Tech Stack
+Aura Sum is a full-stack web application that helps users track their personal expenses by uploading receipt images. The app uses AI (via OpenRouter) to automatically extract key information from receipts — merchant name, date, line items, and total — and organises them into categorised expense records. Users can also create and edit expenses manually, export their data to Excel, and view a dashboard summary of their spending.
 
-| Layer | Technology |
+---
+
+## Features
+
+- **AI Receipt Extraction** — Upload a photo of a receipt (JPG, PNG, WebP, PDF) and let the AI read and parse it automatically
+- **Manual Expense Entry** — Create and edit expenses with full line-item support
+- **Category Management** — Auto-categorise expenses; custom categories are created on the fly
+- **Dashboard** — Spending summary and recent expense overview
+- **Excel Export** — Download all expenses and items as a formatted `.xlsx` file
+- **Bilingual UI** — Full English and Thai language support (i18n)
+- **JWT Authentication** — Secure login with access + refresh token rotation
+
+---
+
+## Tools & Technologies
+
+### Backend
+| Tool | Purpose |
 |---|---|
-| Frontend | Vue 3 + TypeScript + Vite + Pinia + Vue Router + Vue I18n |
-| Backend | Python · FastAPI · SQLAlchemy · Alembic · PyJWT |
-| Database | MySQL 8 |
-| AI | Google Gemini API |
-| Frontend tests | Vitest + Vue Test Utils |
-| Backend tests | pytest |
-| E2E tests | Playwright (Chromium) |
+| Python 3.11+ | Primary language |
+| FastAPI | REST API framework |
+| SQLAlchemy | ORM |
+| Alembic | Database migrations |
+| MySQL (PyMySQL) | Database |
+| Pydantic v2 | Data validation and settings |
+| python-jose | JWT token handling |
+| openpyxl | Excel export |
+| uvicorn | ASGI server |
 
----
-
-## Quick Start
-
-You need three terminals running before the E2E tests can work.
-
-### Terminal 1 — Backend
-
-**macOS / Linux**
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env          # fill in DATABASE_URL and JWT_SECRET_KEY
-alembic upgrade head
-python scripts/seed_categories.py
-uvicorn app.main:app --reload
-```
-
-**Windows PowerShell**
-```powershell
-cd backend
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env   # fill in DATABASE_URL and JWT_SECRET_KEY
-alembic upgrade head
-python scripts/seed_categories.py
-uvicorn app.main:app --reload
-```
-
-The API will be available at `http://127.0.0.1:8000`.
-Swagger UI: `http://127.0.0.1:8000/docs`
-
-### Terminal 2 — Frontend
-
-```bash
-cd frontend
-npm install
-cp .env.example .env          # set VITE_API_BASE_URL=http://127.0.0.1:8000/api
-npm run dev
-```
-
-The app will be available at `http://127.0.0.1:5173`.
-
----
-
-## Running Tests
-
-### Backend pytest
-
-```bash
-cd backend
-.\venv\Scripts\Activate.ps1   # Windows
-# source venv/bin/activate    # macOS / Linux
-
-# The test database must exist and have migrations applied:
-# CREATE DATABASE smart_receipt_db_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-# Set TEST_DATABASE_URL in backend/.env, then:
-# $env:DATABASE_URL = "mysql+pymysql://root:@localhost:3306/smart_receipt_db_test"  # Windows
-# DATABASE_URL=... alembic upgrade head                                             # macOS / Linux
-
-pytest
-```
-
-Expected: **662 passed**
-
-### Frontend unit tests
-
-```bash
-cd frontend
-npm run test
-```
-
-Expected: **400 passed**
-
-### Frontend production build
-
-```bash
-cd frontend
-npm run build
-```
-
-Expected: zero TypeScript errors, clean Vite build.
-
----
-
-## E2E Tests (Playwright)
-
-### Prerequisites
-
-1. Backend running on `http://127.0.0.1:8000` (Terminal 1 above)
-2. Frontend running on `http://127.0.0.1:5173` (Terminal 2 above)
-3. Playwright Chromium installed
-
-```bash
-cd frontend
-npx playwright install chromium
-```
-
-### Dedicated E2E database (recommended)
-
-Create a separate MySQL database for E2E tests:
-
-```sql
-CREATE DATABASE smart_receipt_db_e2e CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-```
-
-Apply migrations and seed categories targeting it:
-
-**macOS / Linux**
-```bash
-cd backend
-DATABASE_URL=mysql+pymysql://root:@localhost:3306/smart_receipt_db_e2e alembic upgrade head
-DATABASE_URL=mysql+pymysql://root:@localhost:3306/smart_receipt_db_e2e python scripts/seed_categories.py
-```
-
-**Windows PowerShell**
-```powershell
-cd backend
-$env:DATABASE_URL = "mysql+pymysql://root:@localhost:3306/smart_receipt_db_e2e"
-.\venv\Scripts\python.exe -m alembic upgrade head
-.\venv\Scripts\python.exe scripts/seed_categories.py
-```
-
-Point the backend at the E2E database by setting `DATABASE_URL` in `backend/.env` before starting it for E2E runs. The `smart_receipt_db_e2e` name passes the safety guard in `scripts/setup_e2e_db.py`.
-
-> **Safety note:** The cleanup script in `backend/scripts/setup_e2e_db.py` will refuse to
-> run unless the database name ends with `_e2e` or `_test`. This prevents accidental
-> destruction of your development or production data.
-
-### Run E2E tests (Terminal 3)
-
-```bash
-cd frontend
-npm run test:e2e
-```
-
-Headed mode (visible browser):
-```bash
-npm run test:e2e:headed
-```
-
-Interactive Playwright UI:
-```bash
-npm run test:e2e:ui
-```
-
-### What is mocked in E2E tests
-
-Only Gemini-dependent endpoints are mocked in automated browser tests:
-
-| Endpoint | Reason |
+### Frontend
+| Tool | Purpose |
 |---|---|
-| `POST /api/receipts/{id}/extract` | Calls Gemini — mocked to avoid quota usage |
-| `POST /api/expenses/{id}/translate` | Calls Gemini — mocked to avoid quota usage |
-
-All other flows (auth, categories, expense CRUD, confirmation, receipt upload/list, delete, Excel export) use the **real backend** and **real E2E database**.
+| Vue 3 | UI framework (Composition API) |
+| TypeScript | Type-safe JavaScript |
+| Vite | Build tool and dev server |
+| Vue Router 4 | Client-side routing |
+| Pinia | State management |
+| vue-i18n | English / Thai localisation |
+| Axios | HTTP client |
+| SweetAlert2 | Alerts and confirmation dialogs |
+| Vitest | Unit testing |
+| Playwright | End-to-end testing |
 
 ---
 
-## E2E Test Coverage
+## AI Model Used
 
-| Spec file | Workflow |
+| Setting | Value |
 |---|---|
-| `auth.spec.ts` | Register, login, refresh, logout, protected redirects |
-| `expense.spec.ts` | Create, edit, delete, Excel export |
-| `receipt.spec.ts` | File selection preview, upload + mocked extract |
-| `confirmation.spec.ts` | Confirm draft from detail and edit pages |
-| `translation.spec.ts` | Translate to Thai and English (mocked) |
-| `export.spec.ts` | Excel download from list and dashboard |
-| `isolation.spec.ts` | User B cannot access User A data |
-| `dashboard.spec.ts` | Summary counts, currency split, deleted exclusion |
-| `errors.spec.ts` | Safe error messages, no stack traces or API keys |
-| `mobile.spec.ts` | Mobile viewport smoke test |
+| Provider | [OpenRouter](https://openrouter.ai) |
+| Model | `google/gemini-2.0-flash-exp:free` |
+| API | OpenAI-compatible (`/chat/completions`) |
 
----
-
-## Environment Files
-
-| File | Purpose |
-|---|---|
-| `backend/.env` | Real backend secrets — never commit |
-| `backend/.env.example` | Safe template — commit this |
-| `frontend/.env` | Frontend env (API base URL) — never commit |
-| `frontend/.env.example` | Safe template |
-| `frontend/.env.e2e.example` | E2E-specific template |
-
----
-
-## Database Safety
-
-**Never run E2E tests against your development or production database.**
-
-The test database name must end with `_e2e` or `_test`. The cleanup helper in
-`backend/scripts/setup_e2e_db.py` enforces this check and will exit with an error
-if the safety condition is not met.
-
----
-
-## Gemini API
-
-`GEMINI_API_KEY` is required only for live extraction and translation.
-Automated tests (both pytest and Playwright) mock Gemini calls and do not consume quota.
-
-If you want to test real Gemini behavior manually:
-1. Set `GEMINI_API_KEY` in `backend/.env`
-2. Upload a receipt in the browser and click "Upload & Extract"
-3. Open an expense detail page and click "Translate"
-
-Do not consume quota in automated test runs.
+The AI is used in a two-step pipeline:
+1. **Read** — The model transcribes all visible text from the receipt image (OCR)
+2. **Parse** — Python code extracts structured fields (merchant, date, items, total) from the transcribed text
 
 ---
 
@@ -233,29 +67,172 @@ Do not consume quota in automated test runs.
 
 ```
 Aura_Sum/
-├── backend/               FastAPI backend
-│   ├── app/               Application code
-│   │   ├── models/        SQLAlchemy models
-│   │   ├── routes/        API route handlers
-│   │   ├── schemas/       Pydantic schemas
-│   │   ├── services/      Business logic
-│   │   └── utils/         Helpers
-│   ├── migrations/        Alembic migration files
-│   ├── scripts/           Setup and seed scripts
-│   └── tests/             pytest test suite (662 tests)
-└── frontend/              Vue 3 frontend
+├── backend/
+│   ├── app/
+│   │   ├── models/        # SQLAlchemy ORM models
+│   │   ├── schemas/       # Pydantic request/response schemas
+│   │   ├── routes/        # FastAPI route handlers
+│   │   ├── services/      # Business logic
+│   │   ├── dependencies/  # Auth dependencies
+│   │   ├── utils/         # Helpers (tokens, passwords, files)
+│   │   ├── config.py      # Settings from .env
+│   │   ├── database.py    # DB engine and session
+│   │   └── main.py        # FastAPI app entry point
+│   ├── migrations/        # Alembic migration scripts
+│   ├── .env               # Local environment variables (not committed)
+│   ├── .env.example       # Template for .env
+│   └── alembic.ini
+└── frontend/
     ├── src/
-    │   ├── api/           Axios API clients
-    │   ├── components/    Shared components
-    │   ├── layouts/       App layout
-    │   ├── locales/       i18n translations (en, th)
-    │   ├── stores/        Pinia stores
-    │   ├── types/         TypeScript types
-    │   ├── utils/         Helper utilities
-    │   ├── views/         Page components
-    │   └── tests/         Vitest unit tests (400 tests)
-    └── e2e/               Playwright E2E tests
-        ├── fixtures/      Test files (safe, no real data)
-        ├── helpers/       Shared helpers
-        └── *.spec.ts      Test specs
+│   │   ├── api/           # Axios API calls
+│   │   ├── components/    # Reusable Vue components
+│   │   ├── views/         # Page-level Vue components
+│   │   ├── stores/        # Pinia state stores
+│   │   ├── types/         # TypeScript interfaces
+│   │   ├── utils/         # Formatters, helpers
+│   │   └── locales/       # en.json / th.json translations
+    ├── index.html
+    └── package.json
 ```
+
+---
+
+## Running Instructions
+
+### Prerequisites
+
+- Python 3.11+
+- Node.js 18+
+- MySQL 8.0+
+- An [OpenRouter](https://openrouter.ai) API key (free tier available)
+
+---
+
+### 1. Clone the repository
+
+```bash
+git clone <repository-url>
+cd Aura_Sum
+```
+
+---
+
+### 2. Backend setup
+
+```bash
+cd backend
+```
+
+**Create and activate a virtual environment:**
+
+```bash
+python -m venv venv
+
+# Windows
+venv\Scripts\activate
+
+# macOS / Linux
+source venv/bin/activate
+```
+
+**Install dependencies:**
+
+```bash
+pip install -r requirements.txt
+```
+
+**Configure environment variables:**
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and fill in the required values:
+
+```env
+DATABASE_URL=mysql+pymysql://your_user:your_password@localhost:3306/smart_receipt_db
+JWT_SECRET_KEY=your-long-random-secret-key
+OPENROUTER_API_KEY=your-openrouter-api-key
+FRONTEND_URL=http://localhost:5173
+```
+
+**Create the database** (in MySQL):
+
+```sql
+CREATE DATABASE smart_receipt_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+**Run database migrations:**
+
+```bash
+alembic upgrade head
+```
+
+**Start the backend server:**
+
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+The API will be available at `http://localhost:8000`.  
+Interactive docs: `http://localhost:8000/docs`
+
+---
+
+### 3. Frontend setup
+
+```bash
+cd frontend
+```
+
+**Install dependencies:**
+
+```bash
+npm install
+```
+
+**Start the development server:**
+
+```bash
+npm run dev
+```
+
+The frontend will be available at `http://localhost:5173`.
+
+---
+
+### 4. Running tests
+
+**Backend** — from the `backend/` directory:
+
+```bash
+pytest
+```
+
+**Frontend unit tests** — from the `frontend/` directory:
+
+```bash
+npm run test
+```
+
+**Frontend end-to-end tests:**
+
+```bash
+npm run test:e2e
+```
+
+---
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | ✅ | MySQL connection string |
+| `JWT_SECRET_KEY` | ✅ | Secret key for signing JWT tokens |
+| `OPENROUTER_API_KEY` | ✅ | API key from openrouter.ai |
+| `OPENROUTER_MODEL` | — | AI model (default: `google/gemini-2.0-flash-exp:free`) |
+| `FRONTEND_URL` | — | Frontend origin for CORS (e.g. `http://localhost:5173`) |
+| `UPLOAD_DIR` | — | Path to store uploaded receipt files (default: `uploads/receipts`) |
+| `MAX_RECEIPT_FILE_SIZE_MB` | — | Max upload size in MB (default: `10`) |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | — | JWT access token lifetime (default: `30`) |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | — | JWT refresh token lifetime (default: `7`) |

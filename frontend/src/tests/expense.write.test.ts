@@ -68,10 +68,12 @@ const fakeExpense = {
   id: 5,
   user_id: 1,
   category_id: 1,
-  title: 'Lunch',
-  merchant_name: 'Noodle Shop',
+  category_name: 'Food',
+  paid_to: 'Noodle Shop',
+  tax_id: null,
   receipt_number: 'R-100',
   receipt_date: '2024-06-01',
+  receipt_time: null,
   payment_method: 'Cash',
   currency: 'THB',
   subtotal: '90.00',
@@ -171,8 +173,8 @@ it('createExpense calls POST /expenses', async () => {
   mockCreateExpense.mockResolvedValue(createdExpense)
   const payload = {
     category_id: 1,
-    title: 'Test',
-    merchant_name: null,
+    paid_to: null,
+    tax_id: null,
     receipt_number: null,
     receipt_date: '2024-06-01',
     payment_method: null,
@@ -193,8 +195,8 @@ it('createExpense calls POST /expenses', async () => {
 it('updateExpense calls PUT /expenses/{id}', async () => {
   const { updateExpense } = await import('../api/expenseApi')
   mockUpdateExpense.mockResolvedValue(fakeExpense)
-  await updateExpense(5, { title: 'Updated' })
-  expect(mockUpdateExpense).toHaveBeenCalledWith(5, { title: 'Updated' })
+  await updateExpense(5, { paid_to: 'Updated Shop' })
+  expect(mockUpdateExpense).toHaveBeenCalledWith(5, { paid_to: 'Updated Shop' })
 })
 
 // ── 4. /expenses/new is NOT treated as an expense ID ─────────────────────────
@@ -221,41 +223,40 @@ it('create page renders the expense form', async () => {
   expect(wrapper.find('form').exists()).toBe(true)
 })
 
-// ── 7. Required category validation ──────────────────────────────────────────
-it('shows category required error when submitting without category', async () => {
-  mockGetCategories.mockResolvedValue(fakeCategories)
-  const wrapper = await mountCreate()
-  await flushPromises()
-
-  // Fill minimum required fields except category
-  await wrapper.find('#ef-title').setValue('Test')
-  await wrapper.find('#ef-total').setValue('100')
-  await wrapper.find('form').trigger('submit')
-  await nextTick()
-
-  expect(wrapper.text()).toContain(en.category_required)
-})
-
-// ── 8. Required title validation ──────────────────────────────────────────────
-it('shows title required error when submitting without title', async () => {
-  mockGetCategories.mockResolvedValue(fakeCategories)
-  const wrapper = await mountCreate()
-  await flushPromises()
-
-  await wrapper.find('#ef-total').setValue('100')
-  await wrapper.find('form').trigger('submit')
-  await nextTick()
-
-  expect(wrapper.text()).toContain(en.title_required)
-})
-
-// ── 9. Required total validation ──────────────────────────────────────────────
+// ── 7. Required total validation (no category/title in form) ──────────────────
 it('shows total required error when submitting without total', async () => {
   mockGetCategories.mockResolvedValue(fakeCategories)
   const wrapper = await mountCreate()
   await flushPromises()
 
-  await wrapper.find('#ef-title').setValue('Test')
+  // Leave total_amount empty — this is the only required field besides date/currency
+  await wrapper.find('form').trigger('submit')
+  await nextTick()
+
+  expect(wrapper.text()).toContain(en.total_required)
+})
+
+// ── 8. Receipt date required validation ───────────────────────────────────────
+it('shows receipt date required error when date is cleared', async () => {
+  mockGetCategories.mockResolvedValue(fakeCategories)
+  const wrapper = await mountCreate()
+  await flushPromises()
+
+  // Clear the date input
+  await wrapper.find('#ef-receipt-date').setValue('')
+  await wrapper.find('#ef-total').setValue('100')
+  await wrapper.find('form').trigger('submit')
+  await nextTick()
+
+  expect(wrapper.text()).toContain(en.error_required)
+})
+
+// ── 9. Required total validation ──────────────────────────────────────────────
+it('shows total required error when submitting without total amount', async () => {
+  mockGetCategories.mockResolvedValue(fakeCategories)
+  const wrapper = await mountCreate()
+  await flushPromises()
+
   await wrapper.find('form').trigger('submit')
   await nextTick()
 
@@ -268,7 +269,6 @@ it('shows invalid amount error for negative total', async () => {
   const wrapper = await mountCreate()
   await flushPromises()
 
-  await wrapper.find('#ef-title').setValue('Test')
   await wrapper.find('#ef-total').setValue('-10')
   await wrapper.find('form').trigger('submit')
   await nextTick()
@@ -365,11 +365,9 @@ it('create submit sends the cleaned request to createExpense', async () => {
   const wrapper = await mountCreate()
   await flushPromises()
 
-  // Select a category
-  const catSelect = wrapper.find('#ef-category')
-  await catSelect.setValue('1')
-
-  await wrapper.find('#ef-title').setValue('Coffee Run')
+  // Type the category name — form resolves it to category_id via text matching
+  await wrapper.find('#ef-category').setValue('Food')
+  await wrapper.find('#ef-paid-to').setValue('Coffee Shop')
   await wrapper.find('#ef-total').setValue('150.00')
 
   await wrapper.find('form').trigger('submit')
@@ -377,7 +375,6 @@ it('create submit sends the cleaned request to createExpense', async () => {
 
   expect(mockCreateExpense).toHaveBeenCalledOnce()
   const arg = mockCreateExpense.mock.calls[0][0]
-  expect(arg.title).toBe('Coffee Run')
   expect(arg.total_amount).toBe('150.00')
   expect(arg.category_id).toBe(1)
 })
@@ -389,8 +386,6 @@ it('successful create redirects to /expenses/{id}', async () => {
   const wrapper = await mountCreate()
   await flushPromises()
 
-  await wrapper.find('#ef-category').setValue('1')
-  await wrapper.find('#ef-title').setValue('Test')
   await wrapper.find('#ef-total').setValue('50.00')
 
   await wrapper.find('form').trigger('submit')
@@ -409,14 +404,14 @@ it('edit page calls getExpenseById on mount', async () => {
 })
 
 // ── 18. Edit page fills fields from existing expense ─────────────────────────
-it('edit page pre-fills the title field', async () => {
+it('edit page pre-fills the paid_to field', async () => {
   mockGetCategories.mockResolvedValue(fakeCategories)
   mockGetExpenseById.mockResolvedValue(fakeExpense)
   const wrapper = await mountEdit(5)
   await flushPromises()
 
-  const titleInput = wrapper.find('#ef-title')
-  expect((titleInput.element as HTMLInputElement).value).toBe('Lunch')
+  const paidToInput = wrapper.find('#ef-paid-to')
+  expect((paidToInput.element as HTMLInputElement).value).toBe('Noodle Shop')
 })
 
 // ── 19. Edit page includes all current items ──────────────────────────────────
@@ -478,22 +473,17 @@ it('edit page shows not-found for 404', async () => {
 it('shows backend error message on create failure', async () => {
   mockGetCategories.mockResolvedValue(fakeCategories)
   mockCreateExpense.mockRejectedValue({
-    response: { status: 422, data: { detail: 'title must not be whitespace-only' } },
+    response: { status: 422, data: { detail: 'total_amount is invalid' } },
   })
 
   const wrapper = await mountCreate()
   await flushPromises()
 
-  await wrapper.find('#ef-category').setValue('1')
-  await wrapper.find('#ef-title').setValue('   ')
   await wrapper.find('#ef-total').setValue('100')
-
-  // Force submit bypassing client validation by setting title after
-  await wrapper.find('#ef-title').setValue('Valid')
   await wrapper.find('form').trigger('submit')
   await flushPromises()
 
-  expect(wrapper.text()).toContain('title must not be whitespace-only')
+  expect(wrapper.text()).toContain('total_amount is invalid')
 })
 
 // ── 24. English/Thai labels switch ───────────────────────────────────────────

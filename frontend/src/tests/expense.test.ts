@@ -72,10 +72,12 @@ const fakeExpense: Expense = {
   id: 1,
   user_id: 42,
   category_id: 3,
-  title: 'Cafe Visit',
-  merchant_name: 'Blue Bottle',
+  category_name: 'Food & Drink',
+  paid_to: 'Blue Bottle',
+  tax_id: null,
   receipt_number: 'R-001',
   receipt_date: '2024-03-01',
+  receipt_time: null,
   payment_method: 'Cash',
   currency: 'THB',
   subtotal: '90.91',
@@ -92,7 +94,7 @@ const fakeExpense: Expense = {
 const fakeExpenseDraft: Expense = {
   ...fakeExpense,
   id: 2,
-  title: 'Draft Expense',
+  paid_to: 'Draft Shop',
   is_confirmed: false,
   items: [],
 }
@@ -166,12 +168,12 @@ it('list shows loading text while fetching', async () => {
 })
 
 // ── 4. List displays expenses ─────────────────────────────────────────────────
-it('list displays expense titles after loading', async () => {
+it('list displays expense paid_to after loading', async () => {
   mockGetExpenses.mockResolvedValue([fakeExpense, fakeExpenseDraft])
   const wrapper = await mountList()
   await flushPromises()
-  expect(wrapper.text()).toContain('Cafe Visit')
-  expect(wrapper.text()).toContain('Draft Expense')
+  expect(wrapper.text()).toContain('Blue Bottle')
+  expect(wrapper.text()).toContain('Draft Shop')
 })
 
 // ── 5. Money and currency display ─────────────────────────────────────────────
@@ -245,11 +247,10 @@ it('detail view extracts numeric id from route and calls API', async () => {
 })
 
 // ── 14. Main fields display ───────────────────────────────────────────────────
-it('detail view shows title, merchant, and receipt number', async () => {
+it('detail view shows paid_to and receipt number', async () => {
   mockGetExpenseById.mockResolvedValue(fakeExpense)
   const wrapper = await mountDetail(1)
   await flushPromises()
-  expect(wrapper.text()).toContain('Cafe Visit')
   expect(wrapper.text()).toContain('Blue Bottle')
   expect(wrapper.text()).toContain('R-001')
 })
@@ -269,8 +270,8 @@ it('detail view shows expense items', async () => {
   mockGetExpenseById.mockResolvedValue(fakeExpense)
   const wrapper = await mountDetail(1)
   await flushPromises()
+  // EN locale shows name_en
   expect(wrapper.text()).toContain('Coffee')
-  expect(wrapper.text()).toContain('กาแฟ')
   expect(wrapper.text()).toContain('50.00 THB')
   expect(wrapper.text()).toContain('100.00 THB')
 })
@@ -309,7 +310,7 @@ describe('locale switching', () => {
   })
 
   it('detail shows Thai not-available label', async () => {
-    mockGetExpenseById.mockResolvedValue({ ...fakeExpense, merchant_name: null })
+    mockGetExpenseById.mockResolvedValue({ ...fakeExpense, paid_to: null })
     const wrapper = await mountDetail(1, 'th')
     await flushPromises()
     expect(wrapper.text()).toContain(th.not_available)

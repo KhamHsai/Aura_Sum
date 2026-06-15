@@ -35,10 +35,13 @@
 
     <!-- Receipt list -->
     <div v-else class="receipt-list">
-      <div v-for="receipt in receipts" :key="receipt.id" class="receipt-card">
-        <div class="receipt-card-top">
-          <div class="receipt-card-info">
-            <div class="receipt-card-filename">{{ receipt.original_filename }}</div>
+      <div v-for="receipt in receipts" :key="receipt.id" class="receipt-card recent-expense-row">
+        <div class="recent-expense-info">
+          <div class="recent-expense-icon" style="background: rgba(0, 240, 255, 0.08); color: var(--color-brand-accent);">
+            📄
+          </div>
+          <div class="recent-expense-details">
+            <div class="receipt-card-filename" style="margin-bottom:0.2rem;">{{ receipt.original_filename }}</div>
             <div class="receipt-card-meta">
               <span>{{ receipt.mime_type }}</span>
               <span>{{ formatFileSize(receipt.file_size) }}</span>
@@ -51,24 +54,24 @@
               </span>
             </div>
           </div>
+        </div>
 
-          <div class="receipt-card-actions">
-            <RouterLink
-              :to="{ name: 'receipt-detail', params: { id: receipt.id } }"
-              class="btn btn-secondary"
-              style="text-decoration:none; font-size:0.88rem; padding:0.4rem 0.9rem;"
-            >
-              {{ t('view_receipt') }}
-            </RouterLink>
-            <RouterLink
-              v-if="receipt.expense_id !== null"
-              :to="{ name: 'expense-detail', params: { id: receipt.expense_id } }"
-              class="btn btn-secondary"
-              style="text-decoration:none; font-size:0.88rem; padding:0.4rem 0.9rem;"
-            >
-              {{ t('open_expense') }}
-            </RouterLink>
-          </div>
+        <div class="recent-expense-right" style="flex-direction: row; gap: 0.5rem; align-items: center;">
+          <RouterLink
+            :to="{ name: 'receipt-detail', params: { id: receipt.id } }"
+            class="btn btn-secondary"
+            style="text-decoration:none; font-size:0.85rem; padding:0.4rem 0.75rem;"
+          >
+            {{ t('view_receipt') }}
+          </RouterLink>
+          <RouterLink
+            v-if="receipt.expense_id !== null"
+            :to="{ name: 'expense-detail', params: { id: receipt.expense_id } }"
+            class="btn btn-primary"
+            style="text-decoration:none; font-size:0.85rem; padding:0.4rem 0.75rem;"
+          >
+            {{ t('open_expense') }}
+          </RouterLink>
         </div>
       </div>
     </div>

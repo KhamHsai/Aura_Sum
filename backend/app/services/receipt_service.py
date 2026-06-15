@@ -218,14 +218,14 @@ def _parse_thai_be_date(raw_date_text: str | None) -> date | None:
         return None
 
 
-def _find_category_by_name(db: Session, name: str | None) -> int | None:
-    """Return the id of an active, non-deleted category whose name_en or name_th
-    matches the given string (case-insensitive).
+def _find_or_create_category(db: Session, name: str | None) -> int | None:
+    """Return the id of a matching category, creating it if needed.
 
-    Matching strategy (tried in order, first match wins):
-    1. Exact match  — "Food & Drink" == "food & drink"
-    2. Contains     — category name contains the search term, or vice-versa
-    Does not create categories automatically.
+    Matching (case-insensitive):
+    1. Exact match on name_en or name_th.
+    2. Contains match (handles "food" → "Food & Drink").
+    3. No match → create new category with that name.
+    Returns None only when name is blank.
     """
     if not name or not name.strip():
         return None
@@ -234,28 +234,34 @@ def _find_category_by_name(db: Session, name: str | None) -> int | None:
 
     categories = (
         db.query(Category)
-        .filter(
-            Category.is_active == True,
-            Category.deleted_at.is_(None),
-        )
+        .filter(Category.is_active == True, Category.deleted_at.is_(None))
         .all()
     )
 
-    # Pass 1: exact match
+    # Exact match
     for cat in categories:
-        name_en = (cat.name_en or "").lower()
-        name_th = (cat.name_th or "").lower()
-        if name_en == search or name_th == search:
+        if (cat.name_en or "").lower() == search or (cat.name_th or "").lower() == search:
             return cat.id
 
-    # Pass 2: partial/contains match (handles "food" → "Food & Drink")
+    # Partial / contains match
     for cat in categories:
         name_en = (cat.name_en or "").lower()
         name_th = (cat.name_th or "").lower()
         if search in name_en or name_en in search or search in name_th or name_th in search:
             return cat.id
 
-    return None
+    # Create new category
+    slug = re.sub(r'[^a-z0-9]+', '_', search).strip('_')[:50] or 'category'
+    code = slug
+    counter = 1
+    while db.query(Category).filter(Category.code == code).first():
+        code = f"{slug}_{counter}"
+        counter += 1
+
+    new_cat = Category(code=code, name_en=name.strip(), name_th=name.strip(), is_active=True)
+    db.add(new_cat)
+    db.flush()
+    return new_cat.id
 
 
 def extract_receipt_to_draft_expense(
@@ -332,7 +338,7 @@ def extract_receipt_to_draft_expense(
             category_text = guessed
 
     # 5. Category matching — use resolved category text.
-    expense_category_id = _find_category_by_name(db, category_text)
+    expense_category_id = _find_or_create_category(db, category_text)
 
     # 6. Build paid_to: use explicit paid_to only.
     paid_to = extracted.paid_to
@@ -362,7 +368,7 @@ def extract_receipt_to_draft_expense(
             ai_raw_response=extracted.model_dump(mode="json"),
             input_method="ai",
             ai_status="completed",
-            is_confirmed=False,
+            is_confirmed=True,
         )
         db.add(expense)
         db.flush()  # get expense.id without committing
@@ -374,7 +380,7 @@ def extract_receipt_to_draft_expense(
             if not item_data.original_name and not item_data.name_en and not item_data.name_th:
                 continue
 
-            item_category_id = _find_category_by_name(db, item_data.category_name)
+            item_category_id = _find_or_create_category(db, item_data.category_name)
 
             item = ExpenseItem(
                 expense_id=expense.id,
@@ -405,14 +411,13 @@ def extract_receipt_to_draft_expense(
             db.refresh(item)
 
         # 13. Build the response while the session is still open.
-        # category_name: use resolved DB name, else the text we matched against
         response_category_name: str | None = None
         if expense.category_id:
             cat = db.query(Category).filter(Category.id == expense.category_id).first()
             if cat:
                 response_category_name = cat.name_en or cat.name_th
         if not response_category_name:
-            response_category_name = category_text  # AI-guessed, even if no DB match
+            response_category_name = category_text
 
         item_responses = [ExpenseItemResponse.model_validate(item) for item in created_items]
         return ExpenseResponse(

@@ -5,8 +5,8 @@
       ← {{ t('back_to_receipts') }}
     </RouterLink>
 
-    <div class="page-header">
-      <h1>{{ t('upload_receipt') }}</h1>
+    <div class="page-header" style="justify-content: center; margin-bottom: 2rem;">
+      <h1 style="text-align: center;">{{ t('upload_receipt') }}</h1>
     </div>
 
     <div class="upload-card detail-card">
@@ -104,7 +104,7 @@ import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '../layouts/AppLayout.vue'
 import { uploadReceipt, extractReceipt } from '../api/receiptApi'
-import { showSuccessAlert, showErrorAlert } from '../utils/alerts'
+import { showSuccessAlert, showErrorAlert, showLoadingAlert, closeAlert } from '../utils/alerts'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -206,6 +206,8 @@ async function handleUploadAndExtract(): Promise<void> {
   validationError.value = null
   uploadProgress.value = 0
   uploadState.value = 'uploading'
+  
+  showLoadingAlert(t('uploading_receipt'), t('analysis_may_take_a_moment'))
 
   let receipt
   try {
@@ -214,6 +216,7 @@ async function handleUploadAndExtract(): Promise<void> {
     })
   } catch (err: unknown) {
     uploadState.value = 'error'
+    closeAlert()
     const detail = extractErrorDetail(err)
     await showErrorAlert(t('upload_failed'), detail)
     uploadState.value = 'idle'
@@ -228,6 +231,7 @@ async function handleUploadAndExtract(): Promise<void> {
     expense = await extractReceipt(receipt.id)
   } catch (err: unknown) {
     uploadState.value = 'error'
+    closeAlert()
     const detail = mapGeminiError(err)
     await showErrorAlert(t('extraction_failed'), detail)
     uploadState.value = 'idle'
@@ -235,6 +239,7 @@ async function handleUploadAndExtract(): Promise<void> {
   }
 
   uploadState.value = 'success'
+  closeAlert()
 
   await showSuccessAlert(t('receipt_uploaded'), t('receipt_uploaded_message'))
 
@@ -286,6 +291,7 @@ onUnmounted(revokePreview)
 <style scoped>
 .upload-card {
   max-width: 640px;
+  margin: 0 auto;
 }
 
 .quota-notice {

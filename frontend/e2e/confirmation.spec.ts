@@ -7,13 +7,12 @@
  */
 
 import { test, expect } from '@playwright/test'
-import { registerUserApi, loginAsUser } from './helpers/auth'
+import { registerUserApi, loginAsUser, loginApi } from './helpers/auth'
 import {
   uniqueSuffix,
   testEmail,
   testUsername,
   getFirstCategoryId,
-  loginApi,
   createExpenseApi,
   confirmSweetAlert,
 } from './helpers/testData'

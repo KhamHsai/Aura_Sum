@@ -1,7 +1,32 @@
 <template>
   <div class="auth-page">
-    <div class="auth-card">
-      <h1>{{ t('register') }}</h1>
+    <!-- Language switcher at top right -->
+    <div class="auth-lang-switcher">
+      <button 
+        type="button" 
+        class="lang-switch-btn" 
+        :class="{ active: locale === 'en' }" 
+        @click="changeLang('en')"
+      >
+        English
+      </button>
+      <span style="color: rgba(98, 93, 136, 0.3); font-size: 0.85rem;">/</span>
+      <button 
+        type="button" 
+        class="lang-switch-btn" 
+        :class="{ active: locale === 'th' }" 
+        @click="changeLang('th')"
+      >
+        ไทย
+      </button>
+    </div>
+
+    <div class="auth-card" style="max-width: 460px;">
+      <!-- Aura branding header -->
+      <div class="auth-header-logo">
+        <div class="app-logo-symbol">A</div>
+        <h2>Smart Receipt</h2>
+      </div>
 
       <!-- Success message -->
       <div v-if="successMessage" class="alert alert-success" role="status">
@@ -42,16 +67,7 @@
           <p v-if="errors.email" class="field-error">{{ errors.email }}</p>
         </div>
 
-        <!-- Full name (optional) -->
-        <div class="form-group">
-          <label for="full_name">{{ t('full_name') }}</label>
-          <input
-            id="full_name"
-            v-model="form.full_name"
-            type="text"
-            autocomplete="name"
-          />
-        </div>
+
 
         <!-- Password -->
         <div class="form-group">
@@ -80,7 +96,7 @@
           <p v-if="errors.confirmPassword" class="field-error">{{ errors.confirmPassword }}</p>
         </div>
 
-        <button type="submit" class="btn btn-primary" :disabled="auth.isLoading">
+        <button type="submit" class="btn btn-primary" style="width:100%;" :disabled="auth.isLoading">
           {{ auth.isLoading ? t('loading') : t('register') }}
         </button>
       </form>
@@ -100,14 +116,18 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '../stores/auth'
 import { registerUser } from '../api/authApi'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const auth = useAuthStore()
 const router = useRouter()
+
+function changeLang(lang: 'en' | 'th'): void {
+  locale.value = lang
+  localStorage.setItem('locale', lang)
+}
 
 const form = reactive({
   username: '',
   email: '',
-  full_name: '',
   password: '',
   confirmPassword: '',
 })
@@ -163,7 +183,6 @@ async function handleSubmit(): Promise<void> {
       username: form.username.trim(),
       email: form.email.trim().toLowerCase(),
       password: form.password,
-      full_name: form.full_name.trim() || undefined,
     })
     successMessage.value = t('register_success')
     setTimeout(() => router.push('/login'), 1500)

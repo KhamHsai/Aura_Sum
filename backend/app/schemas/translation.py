@@ -39,29 +39,27 @@ class ExpenseTranslationResponse(BaseModel):
     expense_id: int
     source_language: Literal["en", "th"]
     target_language: Literal["en", "th"]
-    translated_title: str | None = None
     translated_notes: str | None = None
     items: list[TranslatedExpenseItem] = []
     reused_existing_translation: bool = False
 
 
-# ── Internal schemas for Gemini translation output ───────────────────────────
+# ── Internal schemas for AI translation output ───────────────────────────
 
 class GeminiTranslatedItem(BaseModel):
-    """One item as returned by Gemini in the translation response."""
+    """One item as returned by the AI in the translation response."""
 
     item_id: int
     translated_name: str | None = None
 
 
 class GeminiTranslationResult(BaseModel):
-    """Full Gemini translation output — validated before any database write.
+    """Full AI translation output — validated before any database write.
 
     item_ids_expected must be supplied by the caller so the validator can
     confirm no extra or missing IDs are present.
     """
 
-    translated_title: str | None = None
     translated_notes: str | None = None
     items: list[GeminiTranslatedItem] = []
 
@@ -70,7 +68,7 @@ class GeminiTranslationResult(BaseModel):
         returned_ids = [item.item_id for item in self.items]
         extra = set(returned_ids) - set(expected_ids)
         if extra:
-            raise ValueError(f"Gemini returned unexpected item IDs: {extra}")
+            raise ValueError(f"AI returned unexpected item IDs: {extra}")
         missing = set(expected_ids) - set(returned_ids)
         if missing:
-            raise ValueError(f"Gemini did not return translations for item IDs: {missing}")
+            raise ValueError(f"AI did not return translations for item IDs: {missing}")
